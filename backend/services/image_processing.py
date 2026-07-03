@@ -80,14 +80,20 @@ def crop_rotate(
     width: int,
     height: int,
     angle: float = 0.0,
+    flip_h: bool = False,
+    flip_v: bool = False,
 ) -> Image.Image:
-    """Crop a region and optionally rotate (expand canvas to fit)."""
+    """Crop a region, optionally flip, and rotate (expand canvas to fit)."""
     w, h = image.size
     left = max(0, min(left, w - 1))
     top = max(0, min(top, h - 1))
     width = max(1, min(width, w - left))
     height = max(1, min(height, h - top))
     cropped = image.crop((left, top, left + width, top + height))
+    if flip_h:
+        cropped = cropped.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    if flip_v:
+        cropped = cropped.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
     if abs(angle) > 0.01:
         cropped = cropped.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
     return cropped
@@ -113,6 +119,7 @@ def adjust_image(
     brightness: float = 1.0,
     contrast: float = 1.0,
     saturation: float = 1.0,
+    exposure: float = 1.0,
     sharpness: float = 1.0,
 ) -> Image.Image:
     has_alpha = image.mode == "RGBA"
@@ -120,6 +127,11 @@ def adjust_image(
     rgb = image.convert("RGB")
 
     result = ImageEnhance.Brightness(rgb).enhance(brightness)
+    if abs(exposure - 1.0) > 0.01:
+        arr = np.array(result, dtype=np.float32) / 255.0
+        gamma = max(0.25, min(4.0, 1.0 / exposure))
+        adjusted = np.clip(np.power(arr, gamma), 0.0, 1.0)
+        result = Image.fromarray((adjusted * 255).astype(np.uint8))
     result = ImageEnhance.Contrast(result).enhance(contrast)
     result = ImageEnhance.Color(result).enhance(saturation)
     result = ImageEnhance.Sharpness(result).enhance(sharpness)

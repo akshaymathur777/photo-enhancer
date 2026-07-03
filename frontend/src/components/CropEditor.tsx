@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, RotateCcw, RotateCw } from "lucide-react";
+import { FlipHorizontal, FlipVertical, Loader2, RotateCcw, RotateCw } from "lucide-react";
 
 interface CropEditorProps {
   imageUrl: string;
@@ -13,6 +13,8 @@ export function CropEditor({ imageUrl, file, onResult, onError }: CropEditorProp
   const containerRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(false);
   const [angle, setAngle] = useState(0);
+  const [flipH, setFlipH] = useState(false);
+  const [flipV, setFlipV] = useState(false);
   const [crop, setCrop] = useState({ x: 0.1, y: 0.1, w: 0.8, h: 0.8 });
   const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
   const dragging = useRef<string | null>(null);
@@ -37,6 +39,8 @@ export function CropEditor({ imageUrl, file, onResult, onError }: CropEditorProp
       form.append("width", String(Math.round(crop.w * imgSize.w)));
       form.append("height", String(Math.round(crop.h * imgSize.h)));
       form.append("angle", String(angle));
+      form.append("flip_h", String(flipH));
+      form.append("flip_v", String(flipV));
       const res = await fetch("/api/crop-rotate", { method: "POST", body: form });
       if (!res.ok) throw new Error(await res.text());
       onResult(await res.blob());
@@ -87,7 +91,14 @@ export function CropEditor({ imageUrl, file, onResult, onError }: CropEditorProp
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
       >
-        <img ref={imgRef} src={imageUrl} alt="Crop" className="w-full h-full object-contain" draggable={false} />
+        <img
+          ref={imgRef}
+          src={imageUrl}
+          alt="Crop"
+          className="w-full h-full object-contain"
+          draggable={false}
+          style={{ transform: `${flipH ? "scaleX(-1)" : ""} ${flipV ? "scaleY(-1)" : ""}`.trim() || undefined }}
+        />
         <div
           className="absolute border-2 border-accent bg-accent/10 cursor-move"
           style={{
@@ -104,13 +115,29 @@ export function CropEditor({ imageUrl, file, onResult, onError }: CropEditorProp
           />
         </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <button type="button" onClick={() => setAngle((a) => a - 90)} className="p-2 rounded-lg bg-surface border border-surface-border">
+      <div className="flex items-center gap-2 shrink-0 flex-wrap">
+        <button type="button" onClick={() => setAngle((a) => a - 90)} className="p-2 rounded-lg bg-surface border border-surface-border" title="Rotate left">
           <RotateCcw className="w-4 h-4" />
         </button>
-        <span className="text-sm text-gray-400 flex-1 text-center">{angle}°</span>
-        <button type="button" onClick={() => setAngle((a) => a + 90)} className="p-2 rounded-lg bg-surface border border-surface-border">
+        <span className="text-sm text-gray-400 min-w-[3rem] text-center">{angle}°</span>
+        <button type="button" onClick={() => setAngle((a) => a + 90)} className="p-2 rounded-lg bg-surface border border-surface-border" title="Rotate right">
           <RotateCw className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setFlipH((f) => !f)}
+          className={`p-2 rounded-lg border ${flipH ? "bg-accent/20 border-accent/40" : "bg-surface border-surface-border"}`}
+          title="Flip horizontal"
+        >
+          <FlipHorizontal className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setFlipV((f) => !f)}
+          className={`p-2 rounded-lg border ${flipV ? "bg-accent/20 border-accent/40" : "bg-surface border-surface-border"}`}
+          title="Flip vertical"
+        >
+          <FlipVertical className="w-4 h-4" />
         </button>
         <button
           type="button"

@@ -242,6 +242,8 @@ async def api_crop_rotate(
     width: int = Form(0),
     height: int = Form(0),
     angle: float = Form(0.0),
+    flip_h: bool = Form(False),
+    flip_v: bool = Form(False),
 ):
     image = await _load_image(file)
     w, h = image.size
@@ -249,7 +251,7 @@ async def api_crop_rotate(
         width = w
     if height <= 0:
         height = h
-    result = crop_rotate(image, left, top, width, height, angle)
+    result = crop_rotate(image, left, top, width, height, angle, flip_h, flip_v)
     return Response(content=image_to_bytes(result, "JPEG"), media_type="image/jpeg")
 
 
@@ -462,10 +464,11 @@ async def api_adjust(
     brightness: float = Form(1.0),
     contrast: float = Form(1.0),
     saturation: float = Form(1.0),
+    exposure: float = Form(1.0),
     sharpness: float = Form(1.0),
 ):
     image = await _load_image(file)
-    result = adjust_image(image, brightness, contrast, saturation, sharpness)
+    result = adjust_image(image, brightness, contrast, saturation, exposure, sharpness)
     return Response(content=image_to_bytes(result, "JPEG"), media_type="image/jpeg")
 
 

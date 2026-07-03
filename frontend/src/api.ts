@@ -56,6 +56,7 @@ export interface ToolOptions {
   brightness: number;
   contrast: number;
   saturation: number;
+  exposure: number;
   sharpness: number;
   denoiseStrength: number;
   sharpenAmount: number;
@@ -88,6 +89,7 @@ export const defaultOptions: ToolOptions = {
   brightness: 1.0,
   contrast: 1.0,
   saturation: 1.0,
+  exposure: 1.0,
   sharpness: 1.0,
   denoiseStrength: 10,
   sharpenAmount: 1.5,
@@ -246,6 +248,7 @@ export async function processImage(
       form.append("brightness", String(options.brightness));
       form.append("contrast", String(options.contrast));
       form.append("saturation", String(options.saturation));
+      form.append("exposure", String(options.exposure));
       form.append("sharpness", String(options.sharpness));
       break;
     case "denoise":

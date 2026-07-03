@@ -565,6 +565,7 @@ export default function App() {
                 <Slider label="Brightness" value={options.brightness} min={0.5} max={1.5} step={0.05} onChange={(v) => setOpt("brightness", v)} />
                 <Slider label="Contrast" value={options.contrast} min={0.5} max={1.5} step={0.05} onChange={(v) => setOpt("contrast", v)} />
                 <Slider label="Saturation" value={options.saturation} min={0} max={2} step={0.05} onChange={(v) => setOpt("saturation", v)} />
+                <Slider label="Exposure" value={options.exposure} min={0.5} max={1.5} step={0.05} onChange={(v) => setOpt("exposure", v)} />
                 <Slider label="Sharpness" value={options.sharpness} min={0.5} max={2} step={0.05} onChange={(v) => setOpt("sharpness", v)} />
               </>
             )}
