@@ -8,6 +8,27 @@ interface CropEditorProps {
   onError: (msg: string) => void;
 }
 
+const DEFAULT_CROP = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+
+function cropChanged(c: typeof DEFAULT_CROP) {
+  return (
+    Math.abs(c.x - DEFAULT_CROP.x) > 0.001 ||
+    Math.abs(c.y - DEFAULT_CROP.y) > 0.001 ||
+    Math.abs(c.w - DEFAULT_CROP.w) > 0.001 ||
+    Math.abs(c.h - DEFAULT_CROP.h) > 0.001
+  );
+}
+
+function applyButtonLabel(crop: typeof DEFAULT_CROP, angle: number, flipH: boolean, flipV: boolean) {
+  const actions: string[] = [];
+  if (cropChanged(crop)) actions.push("crop");
+  if (angle % 360 !== 0) actions.push("rotation");
+  if (flipH || flipV) actions.push("flip");
+  if (actions.length === 0) return "Apply";
+  if (actions.length === 1) return `Apply ${actions[0]}`;
+  return "Apply changes";
+}
+
 export function CropEditor({ imageUrl, file, onResult, onError }: CropEditorProps) {
   const imgRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -15,7 +36,7 @@ export function CropEditor({ imageUrl, file, onResult, onError }: CropEditorProp
   const [angle, setAngle] = useState(0);
   const [flipH, setFlipH] = useState(false);
   const [flipV, setFlipV] = useState(false);
-  const [crop, setCrop] = useState({ x: 0.1, y: 0.1, w: 0.8, h: 0.8 });
+  const [crop, setCrop] = useState({ ...DEFAULT_CROP });
   const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
   const dragging = useRef<string | null>(null);
   const dragStart = useRef({ x: 0, y: 0, crop: crop });
@@ -145,7 +166,7 @@ export function CropEditor({ imageUrl, file, onResult, onError }: CropEditorProp
           disabled={loading}
           className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-sm font-semibold disabled:opacity-40"
         >
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Apply crop"}
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : applyButtonLabel(crop, angle, flipH, flipV)}
         </button>
       </div>
     </div>
