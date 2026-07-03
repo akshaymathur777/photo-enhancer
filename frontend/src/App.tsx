@@ -1,6 +1,7 @@
 import {
   Columns2,
   FolderOpen,
+  HardDrive,
   ImagePlus,
   Loader2,
   Redo2,
@@ -17,6 +18,7 @@ import {
   defaultOptions,
   downloadBlob,
   fetchModes,
+  fetchModelsStatus,
   fetchRelightPresets,
   fetchStyles,
   isImageFile,
@@ -33,6 +35,7 @@ import { ChatPanel } from "./components/ChatPanel";
 import { CompareSlider } from "./components/CompareSlider";
 import { CropEditor } from "./components/CropEditor";
 import { FilterGallery } from "./components/FilterGallery";
+import { ModelDownloadPanel, shouldShowOnboarding } from "./components/ModelDownloadPanel";
 import { ObjectRemovalEditor } from "./components/ObjectRemovalEditor";
 import { StampEditor } from "./components/StampEditor";
 import { useHistory } from "./hooks/useHistory";
@@ -174,6 +177,8 @@ export default function App() {
   const [relightPresets, setRelightPresets] = useState<RelightPreset[]>([]);
   const [modes, setModes] = useState(MODES);
   const [compareMode, setCompareMode] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showModelsPanel, setShowModelsPanel] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const bgImageRef = useRef<HTMLInputElement>(null);
   const history = useHistory();
@@ -188,6 +193,11 @@ export default function App() {
       if (s.length) setStyles(s);
     });
     void fetchRelightPresets().then(setRelightPresets);
+    void fetchModelsStatus()
+      .then((s) => {
+        if (shouldShowOnboarding(s)) setShowOnboarding(true);
+      })
+      .catch(() => {/* offline or server not ready yet */});
   }, []);
 
   useEffect(() => {
@@ -384,6 +394,15 @@ export default function App() {
           </button>
           <button type="button" onClick={revert} disabled={!isDirty} className="px-3 py-1.5 rounded-md text-sm text-gray-300 hover:bg-white/5 disabled:opacity-40">
             Revert
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowModelsPanel(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-gray-300 hover:bg-white/5"
+            title="Manage AI models"
+          >
+            <HardDrive className="w-4 h-4" />
+            <span className="hidden sm:inline">Models</span>
           </button>
           <div className="ml-auto text-xs text-gray-500 truncate max-w-[30%]">
             {fileName ?? "No image open"}
@@ -684,6 +703,21 @@ export default function App() {
 
       <input ref={inputRef} type="file" accept="image/*,.heic,.heif" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void openFile(f); e.target.value = ""; }} />
       <input ref={bgImageRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) setOpt("bgImageFile", f); e.target.value = ""; }} />
+
+      {showOnboarding && (
+        <ModelDownloadPanel
+          mode="onboarding"
+          onClose={() => setShowOnboarding(false)}
+        />
+      )}
+
+      {showModelsPanel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-lg max-h-[90vh]">
+            <ModelDownloadPanel mode="settings" onClose={() => setShowModelsPanel(false)} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -104,6 +104,37 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/models/status")
+def api_models_status():
+    from services.model_download import get_models_status
+
+    return get_models_status()
+
+
+@app.get("/api/models/download-progress")
+def api_models_download_progress():
+    from services.model_download import get_download_progress
+
+    return get_download_progress()
+
+
+@app.post("/api/models/download-all")
+def api_models_download_all():
+    from services.model_download import download_all_models
+
+    return download_all_models()
+
+
+@app.post("/api/models/download/{model_id}")
+def api_models_download_one(model_id: str):
+    from services.model_download import download_model
+
+    try:
+        return download_model(model_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @app.post("/api/open")
 async def api_open(file: UploadFile = File(...)):
     """Open any image (including HEIC) and return a browser-friendly JPEG preview."""

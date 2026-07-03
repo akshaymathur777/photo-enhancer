@@ -105,18 +105,33 @@ See README build section for WebView2, PyInstaller, and optional Inno Setup inst
 
 | | Minimum | Recommended |
 |---|---------|-------------|
-| OS | Windows 10/11 | Windows 11 |
+| OS | Windows 10/11 (64-bit) | Windows 11 |
 | RAM | 8 GB | 16 GB+ |
-| Disk | 10 GB free (models on demand) | 20 GB+ |
+| Disk | 10 GB free (for AI models) | 20 GB+ |
 | GPU | Optional (CPU works) | NVIDIA CUDA for faster AI |
+| Runtime | WebView2 (pre-installed on Windows 11) | Latest WebView2 runtime |
+| Network | Internet required only for initial model download | Stable broadband for first setup |
 
-## Model downloads
+## First run
 
-Models are **not** in git. First use of each feature triggers download (~200 MB – 2 GB per model, ~8 GB total if everything is used). Stored in:
+On first launch, Photo Enhancer shows a welcome screen explaining that **AI models download once to your computer (~6–8 GB total)**. After that, **everything works offline** — your photos never leave your device.
+
+You can choose:
+
+- **Download all now** — prefetch every model for the fastest experience afterward
+- **Download as I go** — models download automatically the first time you use each feature
+
+Progress appears in the app UI (not just server logs). Open **Models** in the toolbar anytime to check status, disk usage, or download remaining models.
+
+Models are stored in:
 
 ```
 %APPDATA%\PhotoEnhancer\models\
 ```
+
+## Model downloads
+
+Models are **not** in git. First use of each feature triggers download (~200 MB – 1 GB per model, ~6–8 GB total if everything is used). You can also prefetch all models from the in-app **Models** panel.
 
 ## Configuration
 

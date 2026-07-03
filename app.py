@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import sys
@@ -26,8 +27,8 @@ LOADING_HTML = """<!DOCTYPE html>
 <meta charset="utf-8">
 <title>Photo Enhancer</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
     font-family: "Segoe UI", system-ui, sans-serif;
     background: linear-gradient(145deg, #0f172a 0%, #1e293b 100%);
     color: #e2e8f0;
@@ -35,8 +36,8 @@ LOADING_HTML = """<!DOCTYPE html>
     display: flex;
     align-items: center;
     justify-content: center;
-  }
-  .card {
+  }}
+  .card {{
     text-align: center;
     padding: 2.5rem 3rem;
     border-radius: 16px;
@@ -44,25 +45,65 @@ LOADING_HTML = """<!DOCTYPE html>
     border: 1px solid rgba(148, 163, 184, 0.2);
     box-shadow: 0 24px 48px rgba(0, 0, 0, 0.35);
     max-width: 420px;
-  }
-  h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
-  p { color: #94a3b8; font-size: 0.95rem; margin-bottom: 1.5rem; }
-  .spinner {
-    width: 40px; height: 40px; margin: 0 auto;
+    width: 90%;
+  }}
+  h1 {{ font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }}
+  p {{ color: #94a3b8; font-size: 0.95rem; margin-bottom: 1.5rem; line-height: 1.5; }}
+  .spinner {{
+    width: 40px; height: 40px; margin: 0 auto 1rem;
     border: 3px solid rgba(148, 163, 184, 0.25);
-    border-top-color: #38bdf8;
+    border-top-color: #6366f1;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  }}
+  .progress-wrap {{ display: none; margin-top: 0.5rem; }}
+  .progress-wrap.active {{ display: block; }}
+  .progress-bar {{
+    height: 6px; border-radius: 999px;
+    background: rgba(148, 163, 184, 0.2);
+    overflow: hidden; margin-bottom: 0.5rem;
+  }}
+  .progress-fill {{
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, #6366f1, #818cf8);
+    border-radius: 999px;
+    transition: width 0.3s ease;
+  }}
+  .progress-label {{ font-size: 0.8rem; color: #94a3b8; }}
+  @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
 </style>
 </head>
 <body>
   <div class="card">
     <h1>Photo Enhancer</h1>
-    <p>Starting the editor&hellip;</p>
-    <div class="spinner" aria-hidden="true"></div>
+    <p id="status">Starting the editor&hellip;<br><span style="font-size:0.85rem">Models download once, then work offline.</span></p>
+    <div class="spinner" id="spinner" aria-hidden="true"></div>
+    <div class="progress-wrap" id="progress-wrap">
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      <div class="progress-label" id="progress-label"></div>
+    </div>
   </div>
+  <script>
+    (function () {{
+      var base = "{base_url}";
+      var statusEl = document.getElementById("status");
+      var wrap = document.getElementById("progress-wrap");
+      var fill = document.getElementById("progress-fill");
+      var label = document.getElementById("progress-label");
+
+      window.__updateDownloadProgress = function (p) {{
+        if (!p || p.status !== "downloading") {{
+          wrap.classList.remove("active");
+          return;
+        }}
+        wrap.classList.add("active");
+        statusEl.innerHTML = "Downloading AI models&hellip;<br><span style=\\"font-size:0.85rem\\">Once complete, everything works offline.</span>";
+        var pct = Math.round(p.percent || 0);
+        fill.style.width = pct + "%";
+        label.textContent = (p.message || p.current_model_name || "Downloading") + " — " + pct + "%";
+      }};
+    }})();
+  </script>
 </body>
 </html>"""
 
@@ -113,6 +154,30 @@ def wait_for_server(url: str, timeout_sec: float = 60.0) -> bool:
         except (urllib.error.URLError, TimeoutError, OSError):
             time.sleep(0.25)
     return False
+
+
+def _fetch_download_progress(url: str) -> dict | None:
+    try:
+        with urllib.request.urlopen(f"{url.rstrip('/')}/api/models/download-progress", timeout=2) as resp:
+            return json.loads(resp.read().decode())
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return None
+
+
+def wait_for_downloads(url: str, window, timeout_sec: float = 7200.0) -> None:
+    """Poll download progress and update loading screen until idle or timeout."""
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        progress = _fetch_download_progress(url)
+        if progress is None or progress.get("status") != "downloading":
+            return
+        try:
+            window.evaluate_js(
+                f"window.__updateDownloadProgress && window.__updateDownloadProgress({json.dumps(progress)})"
+            )
+        except Exception:
+            pass
+        time.sleep(0.8)
 
 
 class _ServerHandle:
@@ -170,7 +235,7 @@ def main() -> None:
 
     window = webview.create_window(
         WINDOW_TITLE,
-        html=LOADING_HTML,
+        html=LOADING_HTML.format(base_url=url),
         width=1280,
         height=800,
         min_size=(MIN_WIDTH, MIN_HEIGHT),
@@ -179,6 +244,7 @@ def main() -> None:
 
     def _load_app_when_ready() -> None:
         if wait_for_server(url):
+            wait_for_downloads(url, window)
             window.load_url(url)
         else:
             window.load_html(

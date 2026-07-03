@@ -367,3 +367,59 @@ export async function fetchRelightPresets(): Promise<RelightPreset[]> {
   const data = (await res.json()) as { presets: RelightPreset[] };
   return data.presets ?? [];
 }
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  size_estimate_mb: number;
+  feature: string;
+  status: "present" | "missing" | "downloading" | "error";
+}
+
+export interface ModelsStatus {
+  models: ModelInfo[];
+  downloaded_count: number;
+  total_count: number;
+  all_present: boolean;
+  disk_used_bytes: number;
+  disk_used_mb: number;
+  total_estimate_mb: number;
+  models_dir: string;
+  download_in_progress: boolean;
+}
+
+export interface DownloadProgress {
+  status: "idle" | "downloading" | "complete" | "error";
+  current_model_id: string | null;
+  current_model_name: string | null;
+  bytes_downloaded: number;
+  bytes_total: number;
+  percent: number;
+  model_statuses: Record<string, string>;
+  error: string | null;
+  message: string | null;
+}
+
+export async function fetchModelsStatus(): Promise<ModelsStatus> {
+  const res = await fetch("/api/models/status");
+  if (!res.ok) throw new Error(await parseApiError(res));
+  return (await res.json()) as ModelsStatus;
+}
+
+export async function fetchDownloadProgress(): Promise<DownloadProgress> {
+  const res = await fetch("/api/models/download-progress");
+  if (!res.ok) throw new Error(await parseApiError(res));
+  return (await res.json()) as DownloadProgress;
+}
+
+export async function startDownloadAll(): Promise<{ started: boolean; message: string }> {
+  const res = await fetch("/api/models/download-all", { method: "POST" });
+  if (!res.ok) throw new Error(await parseApiError(res));
+  return (await res.json()) as { started: boolean; message: string };
+}
+
+export async function startDownloadModel(modelId: string): Promise<{ started: boolean; message: string }> {
+  const res = await fetch(`/api/models/download/${modelId}`, { method: "POST" });
+  if (!res.ok) throw new Error(await parseApiError(res));
+  return (await res.json()) as { started: boolean; message: string };
+}
