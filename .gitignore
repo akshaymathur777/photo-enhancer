@@ -1,0 +1,33 @@
+# Python
+backend/venv/
+backend/models/
+models/
+backend/.env
+.env
+backend/mobile_sam.pt
+backend/sam2.1_b.pt
+backend/yolov8n-seg.pt
+backend/runs/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Desktop build
+build/
+dist/
+*.manifest
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Local analysis docs (optional — remove line to track)
+# AIRBRUSH_*.md
