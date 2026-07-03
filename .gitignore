@@ -29,5 +29,10 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Local analysis docs (optional — remove line to track)
-# AIRBRUSH_*.md
+# Internal planning / research (local only — not published)
+AIRBRUSH_*.md
+*_RESEARCH.md
+*_PLAN.md
+*_STRATEGY.md
+GITHUB_RELEASE_CHECKLIST.md
+AI_APP_OPPORTUNITIES.md
