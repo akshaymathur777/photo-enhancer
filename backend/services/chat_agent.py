@@ -173,25 +173,39 @@ def _ollama_models() -> list[str]:
     return list(_ollama_cache.get("models") or [])
 
 
-def ollama_model_present() -> bool:
-    """True if the configured model is actually pulled on the local server."""
-    want = ollama_model().lower()
+def _model_name_matches(want: str, available: str) -> bool:
+    want = want.lower()
+    name = available.lower()
+    if name == want or name == f"{want}:latest":
+        return True
+    want_base = want.split(":", 1)[0]
+    # Allow matching by base name (e.g. "llama3.2" matches "llama3.2:3b").
+    return ":" not in want and name.split(":", 1)[0] == want_base
+
+
+def ollama_model_present(model: str | None = None) -> bool:
+    """True if the given (or configured) model is pulled on the local server."""
+    want = (model or ollama_model()).lower()
     models = [m.lower() for m in _ollama_models()]
     if not models:
         return False
-    want_base = want.split(":", 1)[0]
-    for name in models:
-        if name == want or name == f"{want}:latest":
-            return True
-        # Allow matching by base name (e.g. "llama3.2" matches "llama3.2:3b").
-        if ":" not in want and name.split(":", 1)[0] == want_base:
-            return True
-    return False
+    return any(_model_name_matches(want, name) for name in models)
+
+
+def effective_ollama_model() -> str | None:
+    """Model to use for chat: configured if present, else first pulled model."""
+    if not ollama_available():
+        return None
+    configured = ollama_model()
+    if ollama_model_present(configured):
+        return configured
+    models = _ollama_models()
+    return models[0] if models else None
 
 
 def ollama_ready() -> bool:
-    """Reachable AND the configured model is available to serve requests."""
-    return ollama_available() and ollama_model_present()
+    """Reachable AND at least one model is available to serve requests."""
+    return effective_ollama_model() is not None
 
 
 def active_backend() -> str:
@@ -220,13 +234,16 @@ def chat_backend_status() -> dict[str, Any]:
     """Structured status for /api/chat/status."""
     backend = active_backend()
     reachable = ollama_available()
+    effective = effective_ollama_model()
+    configured = ollama_model() if reachable else None
     return {
         # Backwards-compatible flag: any LLM-backed engine is "ai".
         "ai_enabled": backend in ("ollama", "openai"),
         "backend": backend,
         "ollama_reachable": reachable,
-        "ollama_model_present": reachable and ollama_model_present(),
-        "ollama_model": ollama_model() if reachable else None,
+        "ollama_model_present": effective is not None,
+        "ollama_model": effective,
+        "ollama_model_configured": configured,
         "openai_available": has_openai_key(),
     }
 
@@ -296,11 +313,15 @@ def _parse_with_ollama(message: str, history: list[dict]) -> ChatAction | None:
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": message})
 
+    model = effective_ollama_model()
+    if not model:
+        return None
+
     with httpx.Client(timeout=60.0) as client:
         resp = client.post(
             f"{ollama_host()}/api/chat",
             json={
-                "model": ollama_model(),
+                "model": model,
                 "messages": messages,
                 "stream": False,
                 "format": "json",
