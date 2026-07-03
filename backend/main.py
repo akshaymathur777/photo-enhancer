@@ -56,7 +56,8 @@ from services.object_removal import (
     mask_overlay_preview,
     segment_from_points,
 )
-from services.upscale_limits import MAX_OUTPUT_MP, max_allowed_scale
+from services.settings import get_max_output_mp, get_settings_payload, set_max_output_mp_from_megapixels
+from services.upscale_limits import max_allowed_scale, validate_max_output_mp
 
 app = FastAPI(title="Photo Enhancer", version="2.0.0")
 
@@ -179,7 +180,7 @@ def list_models():
             {"id": "upscale", "name": "Upscale", "model": "Real-ESRGAN"},
         ],
         "upscale": {
-            "max_output_megapixels": MAX_OUTPUT_MP // 1_000_000,
+            "max_output_megapixels": get_settings_payload()["max_output_megapixels"],
             "scales": [2, 4],
         },
     }
@@ -492,25 +493,55 @@ async def api_sharpen(
     return Response(content=image_to_bytes(result, "JPEG"), media_type="image/jpeg")
 
 
+@app.get("/api/settings")
+def api_get_settings():
+    return get_settings_payload()
+
+
+@app.post("/api/settings")
+async def api_update_settings(max_output_megapixels: int = Form(...)):
+    try:
+        pixels = set_max_output_mp_from_megapixels(max_output_megapixels)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    payload = get_settings_payload()
+    payload["max_output_megapixels"] = pixels // 1_000_000
+    return payload
+
+
 @app.post("/api/upscale")
 async def api_upscale(
     file: UploadFile = File(...),
     scale: int = Form(2),
     mode: str = Form("balanced"),
+    max_output_megapixels: int | None = Form(None),
 ):
     if scale not in (2, 4):
         raise HTTPException(400, "Scale must be 2 or 4")
     image = await _load_image(file)
     w, h = image.size
+    limit_override = None
+    if max_output_megapixels is not None:
+        try:
+            limit_override = validate_max_output_mp(max_output_megapixels * 1_000_000)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
     try:
-        effective_scale, warning = clamp_scale_for_mode(w, h, scale, normalize_mode(mode))
+        effective_scale, warning = clamp_scale_for_mode(
+            w, h, scale, normalize_mode(mode), limit_override
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     try:
         result = upscale(image, effective_scale)
     except Exception as exc:
         raise _processing_error(exc) from exc
-    headers: dict[str, str] = {"X-Upscale-Scale": str(effective_scale)}
+    headers: dict[str, str] = {
+        "X-Upscale-Scale": str(effective_scale),
+        "X-Upscale-Limit-MP": str(
+            (limit_override if limit_override is not None else get_max_output_mp()) // 1_000_000
+        ),
+    }
     if warning:
         headers["X-Upscale-Warning"] = warning
     return Response(
@@ -521,12 +552,27 @@ async def api_upscale(
 
 
 @app.get("/api/upscale/limits")
-def upscale_limits(width: int, height: int):
+def upscale_limits(
+    width: int,
+    height: int,
+    max_output_megapixels: int | None = None,
+):
     if width < 1 or height < 1:
         raise HTTPException(400, "width and height must be positive")
-    allowed = max_allowed_scale(width, height)
+    limit_override = None
+    if max_output_megapixels is not None:
+        try:
+            limit_override = validate_max_output_mp(max_output_megapixels * 1_000_000)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    allowed = max_allowed_scale(width, height, limit_override)
+    limit_mp = (
+        limit_override // 1_000_000
+        if limit_override is not None
+        else get_settings_payload()["max_output_megapixels"]
+    )
     return {
-        "max_output_megapixels": MAX_OUTPUT_MP // 1_000_000,
+        "max_output_megapixels": limit_mp,
         "max_scale": allowed,
         "can_upscale": allowed is not None,
     }

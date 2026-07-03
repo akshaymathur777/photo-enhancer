@@ -73,7 +73,13 @@ export interface ToolOptions {
   batchOutputDir: string;
   batchOperation: string;
   aiRepairAuto: boolean;
+  maxOutputMp: number;
 }
+
+export const DEFAULT_MAX_OUTPUT_MP = 150;
+export const MIN_MAX_OUTPUT_MP = 50;
+export const MAX_MAX_OUTPUT_MP_BOUND = 400;
+export const UPSCALE_LIMIT_STORAGE_KEY = "photo-enhancer-max-output-mp";
 
 export const defaultOptions: ToolOptions = {
   mode: "balanced",
@@ -106,6 +112,7 @@ export const defaultOptions: ToolOptions = {
   batchOutputDir: "",
   batchOperation: "auto_enhance",
   aiRepairAuto: false,
+  maxOutputMp: DEFAULT_MAX_OUTPUT_MP,
 };
 
 const ENDPOINTS: Partial<Record<ToolId, string>> = {
@@ -135,27 +142,79 @@ const ENDPOINTS: Partial<Record<ToolId, string>> = {
 
 export const CANVAS_TOOLS: ToolId[] = ["crop", "stamp", "eraser", "remove-objects"];
 
-export const MAX_OUTPUT_MP = 100_000_000;
+export interface UpscalePreset {
+  id: string;
+  label: string;
+  megapixels: number;
+}
 
-export function maxUpscaleScale(width: number, height: number, mode: AiMode = "balanced"): 2 | 4 | null {
+export interface AppSettings {
+  max_output_megapixels: number;
+  min_max_output_megapixels: number;
+  max_max_output_megapixels: number;
+  default_max_output_megapixels: number;
+  presets: UpscalePreset[];
+  settings_path?: string;
+}
+
+export function getStoredMaxOutputMp(): number {
+  const raw = localStorage.getItem(UPSCALE_LIMIT_STORAGE_KEY);
+  if (raw) {
+    const parsed = parseInt(raw, 10);
+    if (!Number.isNaN(parsed)) {
+      return Math.min(MAX_MAX_OUTPUT_MP_BOUND, Math.max(MIN_MAX_OUTPUT_MP, parsed));
+    }
+  }
+  return DEFAULT_MAX_OUTPUT_MP;
+}
+
+export async function fetchSettings(): Promise<AppSettings> {
+  const res = await fetch("/api/settings");
+  if (!res.ok) throw new Error(await parseApiError(res));
+  return (await res.json()) as AppSettings;
+}
+
+export async function saveMaxOutputMp(megapixels: number): Promise<AppSettings> {
+  const clamped = Math.min(MAX_MAX_OUTPUT_MP_BOUND, Math.max(MIN_MAX_OUTPUT_MP, Math.round(megapixels)));
+  localStorage.setItem(UPSCALE_LIMIT_STORAGE_KEY, String(clamped));
+  const form = new FormData();
+  form.append("max_output_megapixels", String(clamped));
+  const res = await fetch("/api/settings", { method: "POST", body: form });
+  if (!res.ok) throw new Error(await parseApiError(res));
+  return (await res.json()) as AppSettings;
+}
+
+export function maxUpscaleScale(
+  width: number,
+  height: number,
+  mode: AiMode = "balanced",
+  maxOutputMp = getStoredMaxOutputMp()
+): 2 | 4 | null {
+  const limit = maxOutputMp * 1_000_000;
   const pixels = width * height;
   const modeCap = mode === "fast" ? 2 : 4;
-  if (pixels * 16 <= MAX_OUTPUT_MP && modeCap >= 4) return 4;
-  if (pixels * 4 <= MAX_OUTPUT_MP) return Math.min(2, modeCap) as 2 | 4;
+  if (pixels * 16 <= limit && modeCap >= 4) return 4;
+  if (pixels * 4 <= limit) return Math.min(2, modeCap) as 2 | 4;
   return null;
 }
 
-export function upscaleScaleHint(width: number, height: number, scale: 2 | 4): string | null {
-  const max = maxUpscaleScale(width, height);
+export function upscaleScaleHint(
+  width: number,
+  height: number,
+  scale: 2 | 4,
+  maxOutputMp = getStoredMaxOutputMp()
+): string | null {
+  const max = maxUpscaleScale(width, height, "balanced", maxOutputMp);
   if (max === null) {
     const srcMp = (width * height) / 1_000_000;
-    return `Image is ~${srcMp.toFixed(0)}MP — too large to upscale within the 100MP output limit.`;
+    return `Image is ~${srcMp.toFixed(0)}MP — too large to upscale within the ${maxOutputMp}MP output limit.`;
   }
   if (scale > max) {
-    return `${scale}× exceeds the limit for this image; ${max}× will be used instead.`;
+    return `${scale}× exceeds the ${maxOutputMp}MP limit for this image; ${max}× will be used instead.`;
   }
   const outMp = (width * height * scale * scale) / 1_000_000;
-  if (outMp > 80) {
+  const warnThreshold = maxOutputMp * 0.8;
+  if (outMp > warnThreshold) {
     return `Output will be ~${outMp.toFixed(0)}MP — may use significant memory.`;
   }
   return null;
@@ -177,6 +236,7 @@ export interface ProcessResult {
   blob: Blob;
   warning?: string;
   effectiveScale?: number;
+  appliedLimitMp?: number;
 }
 
 export async function processImage(
@@ -259,6 +319,7 @@ export async function processImage(
       break;
     case "upscale":
       form.append("scale", String(options.scale));
+      form.append("max_output_megapixels", String(options.maxOutputMp));
       break;
     case "ai-repair":
       form.append("auto_detect", String(options.aiRepairAuto));
@@ -281,8 +342,10 @@ export async function processImage(
   if (tool === "upscale") {
     const warning = res.headers.get("X-Upscale-Warning") ?? undefined;
     const scaleHeader = res.headers.get("X-Upscale-Scale");
+    const limitHeader = res.headers.get("X-Upscale-Limit-MP");
     const effectiveScale = scaleHeader ? parseInt(scaleHeader, 10) : undefined;
-    return { blob, warning, effectiveScale };
+    const appliedLimitMp = limitHeader ? parseInt(limitHeader, 10) : undefined;
+    return { blob, warning, effectiveScale, appliedLimitMp };
   }
   return { blob };
 }

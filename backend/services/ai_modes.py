@@ -84,11 +84,17 @@ def resolve_inpaint_mode(global_mode: str | None, explicit: str | None = None) -
     return "ai"
 
 
-def clamp_scale_for_mode(width: int, height: int, requested: int, mode: str | None) -> tuple[int, str | None]:
+def clamp_scale_for_mode(
+    width: int,
+    height: int,
+    requested: int,
+    mode: str | None,
+    max_output_mp: int | None = None,
+) -> tuple[int, str | None]:
     """Apply mode-specific upscale caps on top of global MP limits."""
     from services.upscale_limits import clamp_scale
 
-    effective, warning = clamp_scale(width, height, requested)
+    effective, warning = clamp_scale(width, height, requested, max_output_mp)
     max_for_mode = get_mode_config(mode)["upscale_max_scale"]
     if effective > max_for_mode:
         out_mp = (width * height * max_for_mode * max_for_mode) / 1_000_000

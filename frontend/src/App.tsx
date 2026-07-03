@@ -39,6 +39,8 @@ import { ModelDownloadPanel, shouldShowOnboarding } from "./components/ModelDown
 import { ObjectRemovalEditor } from "./components/ObjectRemovalEditor";
 import { StampEditor } from "./components/StampEditor";
 import { useHistory } from "./hooks/useHistory";
+import { useUpscaleLimit } from "./hooks/useUpscaleLimit";
+import { UpscaleLimitControl } from "./components/UpscaleLimitControl";
 
 type ToolDef = { id: ToolId; label: string; desc: string };
 
@@ -182,6 +184,7 @@ export default function App() {
   const inputRef = useRef<HTMLInputElement>(null);
   const bgImageRef = useRef<HTMLInputElement>(null);
   const history = useHistory();
+  const { maxOutputMp, setMaxOutputMp, bounds, presets } = useUpscaleLimit();
 
   const activeTools = CATEGORIES.find((c) => c.id === category)?.tools ?? [];
 
@@ -199,6 +202,10 @@ export default function App() {
       })
       .catch(() => {/* offline or server not ready yet */});
   }, []);
+
+  useEffect(() => {
+    setOptions((o) => (o.maxOutputMp === maxOutputMp ? o : { ...o, maxOutputMp }));
+  }, [maxOutputMp]);
 
   useEffect(() => {
     if (activeTools.length && !activeTools.some((t) => t.id === tool)) {
@@ -278,11 +285,14 @@ export default function App() {
     setError(null);
     setInfo(null);
     try {
-      const { blob, warning, effectiveScale } = await processImage(workingFile, tool, options);
+      const { blob, warning, effectiveScale, appliedLimitMp } = await processImage(workingFile, tool, options);
       if (tool !== "batch") {
         commitDocument(blob, blob.type || "image/jpeg");
       }
-      if (warning) setInfo(warning);
+      if (warning) {
+        const limitNote = appliedLimitMp ? ` (${appliedLimitMp} MP limit applied)` : "";
+        setInfo(`${warning}${limitNote}`);
+      }
       if (tool === "upscale" && imageSize) {
         const scale = effectiveScale ?? options.scale;
         setImageSize({ w: imageSize.w * scale, h: imageSize.h * scale });
@@ -579,10 +589,16 @@ export default function App() {
             )}
 
             {tool === "upscale" && (
-              <div className="space-y-2">
+              <div className="space-y-3">
+                <UpscaleLimitControl
+                  maxOutputMp={maxOutputMp}
+                  onChange={setMaxOutputMp}
+                  bounds={bounds}
+                  presets={presets}
+                />
                 <div className="flex gap-2">
                   {([2, 4] as const).map((s) => {
-                    const maxScale = imageSize ? maxUpscaleScale(imageSize.w, imageSize.h, options.mode) : 4;
+                    const maxScale = imageSize ? maxUpscaleScale(imageSize.w, imageSize.h, options.mode, maxOutputMp) : 4;
                     const disabled = maxScale !== null && s > maxScale;
                     return (
                       <button key={s} type="button" disabled={disabled} onClick={() => setOpt("scale", s)} className={`flex-1 py-1.5 rounded-lg text-sm ${options.scale === s ? "bg-accent text-white" : "bg-surface border border-surface-border"} ${disabled ? "opacity-40" : ""}`}>
@@ -591,8 +607,8 @@ export default function App() {
                     );
                   })}
                 </div>
-                {imageSize && upscaleScaleHint(imageSize.w, imageSize.h, options.scale) && (
-                  <p className="text-[11px] text-amber-400/90">{upscaleScaleHint(imageSize.w, imageSize.h, options.scale)}</p>
+                {imageSize && upscaleScaleHint(imageSize.w, imageSize.h, options.scale, maxOutputMp) && (
+                  <p className="text-[11px] text-amber-400/90">{upscaleScaleHint(imageSize.w, imageSize.h, options.scale, maxOutputMp)}</p>
                 )}
               </div>
             )}
@@ -613,7 +629,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={runTool}
-                disabled={!workingFile || loading || (tool === "upscale" && imageSize !== null && maxUpscaleScale(imageSize.w, imageSize.h, options.mode) === null)}
+                disabled={!workingFile || loading || (tool === "upscale" && imageSize !== null && maxUpscaleScale(imageSize.w, imageSize.h, options.mode, maxOutputMp) === null)}
                 className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-40 text-sm font-semibold"
               >
                 {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Processing…</> : tool === "batch" ? "Run batch" : "Apply to image"}

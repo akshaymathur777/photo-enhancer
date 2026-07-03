@@ -39,6 +39,7 @@ hiddenimports = [
     "services.model_download",
     "services.object_removal",
     "services.upscale_limits",
+    "services.settings",
     "uvicorn.logging",
     "uvicorn.loops",
     "uvicorn.loops.auto",

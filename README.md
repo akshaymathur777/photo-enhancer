@@ -12,7 +12,7 @@
 - **Background removal** — BiRefNet Massive (default), BRIA RMBG 2.0, Portrait, Matting, Anime, Lite
 - **Replace background** — solid color, blurred original, **custom image**, or transparent PNG
 - **Object removal** — SAM 2.1 smart-select, brush mask, YOLO auto-people; LaMa AI/Quick inpaint
-- **Upscale** — Real-ESRGAN 2× / 4×
+- **Upscale** — Real-ESRGAN 2× / 4× (configurable output limit, default 150 MP)
 - Auto enhance, adjust, denoise, sharpen
 
 ### Edit
@@ -140,6 +140,7 @@ Copy `.env.example` to `.env` in the project root (optional):
 - `OLLAMA_HOST`, `OLLAMA_MODEL` — local chat LLM
 - `OPENAI_API_KEY` — opt-in cloud chat only
 - `CHAT_BACKEND=auto|rules|ollama|openai`
+- `MAX_OUTPUT_MP` — upscale output cap in megapixels (50–400, default **150**). Override the server default; the in-app **Upscale** tool and **Models** panel let you pick Conservative (100 MP), Standard (150 MP), High (200 MP), or a custom value. Preferences sync to `%APPDATA%\PhotoEnhancer\settings.json` on the desktop app.
 
 ## ⚠️ AGPL notice (commercial use)
 

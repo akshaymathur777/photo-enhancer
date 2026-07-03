@@ -17,6 +17,8 @@ import {
   startDownloadAll,
   startDownloadModel,
 } from "../api";
+import { UpscaleLimitControl } from "./UpscaleLimitControl";
+import { useUpscaleLimit } from "../hooks/useUpscaleLimit";
 
 const ONBOARDING_KEY = "photo-enhancer-onboarding-dismissed";
 
@@ -42,6 +44,7 @@ export function ModelDownloadPanel({ mode, onClose }: ModelDownloadPanelProps) {
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const { maxOutputMp, setMaxOutputMp, bounds, presets } = useUpscaleLimit();
 
   const refresh = useCallback(async () => {
     try {
@@ -247,6 +250,19 @@ export function ModelDownloadPanel({ mode, onClose }: ModelDownloadPanelProps) {
             </>
           )}
         </div>
+
+        {!isOnboarding && presets.length > 0 && (
+          <div className="px-5 pb-4 border-t border-surface-border pt-4">
+            <h3 className="text-sm font-medium text-gray-300 mb-2">Upscale output limit</h3>
+            <UpscaleLimitControl
+              compact
+              maxOutputMp={maxOutputMp}
+              onChange={setMaxOutputMp}
+              bounds={bounds}
+              presets={presets}
+            />
+          </div>
+        )}
 
         <div className="p-5 pt-0 flex flex-col sm:flex-row gap-2">
           {isOnboarding ? (

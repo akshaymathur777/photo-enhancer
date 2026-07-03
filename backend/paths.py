@@ -51,6 +51,14 @@ def get_env_file() -> Path:
     return get_project_root() / ".env"
 
 
+def get_settings_path() -> Path:
+    """User-writable app settings (upscale limits, etc.)."""
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return Path(appdata) / "PhotoEnhancer" / "settings.json"
+    return get_project_root() / "settings.json"
+
+
 def get_app_icon() -> Path | None:
     for candidate in (
         get_project_root() / "assets" / "icon.ico",
