@@ -29,6 +29,17 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Local test outputs (dev scripts)
+backend/_test.png
+backend/test_out.jpg
+backend/scripts/_api_test.jpg
+backend/scripts/_test_removal_out.jpg
+backend/scripts/_test*.jpg
+
+# Build logs
+build-log.txt
+pyinstaller.log
+
 # Internal planning / research (local only — not published)
 AIRBRUSH_*.md
 *_RESEARCH.md

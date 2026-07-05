@@ -1,46 +1,28 @@
 # Photo Enhancer
 
-**Local AI photo studio for Windows** — background removal, object removal, upscale, portrait retouch, and 30+ creative filters. **100% offline by default.** No account, no credits, no cloud upload.
+**v0.1.0 beta** — Local AI photo studio for Windows. Background removal, object removal, upscale, portrait retouch, and 30+ creative filters. **100% offline by default.** No account, no credits, no cloud upload.
 
-![Screenshot placeholder — add docs/screenshots/main.png after capture](docs/screenshots/.gitkeep)
+Personal project — see [ABOUT.md](ABOUT.md) for motivation, limits, and roadmap.
 
-> Screenshots coming soon. Run `python launcher.py` or build the desktop app to try it locally.
+## Screenshots
 
-## Features
+| Main editor | Before / after compare |
+|-------------|------------------------|
+| ![Main editor placeholder](docs/screenshots/main.png) | ![Compare slider placeholder](docs/screenshots/compare.png) |
 
-### Enhance (core AI)
-- **Background removal** — BiRefNet Massive (default), BRIA RMBG 2.0, Portrait, Matting, Anime, Lite
-- **Replace background** — solid color, blurred original, **custom image**, or transparent PNG
-- **Object removal** — SAM 2.1 smart-select, brush mask, YOLO auto-people; LaMa AI/Quick inpaint
-- **Upscale** — Real-ESRGAN 2× / 4× (configurable output limit, default 150 MP)
-- Auto enhance, adjust, denoise, sharpen
+Placeholders above — replace with real captures (see [docs/screenshots/README.md](docs/screenshots/README.md)).
 
-### Edit
-- **Before/after compare slider** + multi-step **undo/redo**
-- **Crop & rotate**
-- **Bokeh** — subject-aware blur with circle/heart/hexagon shapes + depth falloff
-- **Blur** — global or background-only
-- **Eraser** shortcut → object removal
-- **Clone stamp**
-- **Prism**, vignette, film grain effects
-- **Relight** — 9 lighting presets (Flash, Golden Hour, Blue Hour, …)
-- **AI Repair** — LaMa inpaint (auto scratch detect or brush)
-- **Photo restore lite** — denoise + sharpen chain
+## Feature highlights
 
-### Portrait
-- **Magic** — one-tap face-aware polish
-- **Skin smooth** — MediaPipe face mask + bilateral filter
-- Red-eye fix, teeth whiten
-- Simple hair tint, basic lip/blush overlay (quality varies — not generative makeup)
-
-### Looks
-- **30 filter presets** with thumbnail gallery (Cinematic, Vintage, Velvia, Noir, …)
-
-### Batch
-- Folder batch processing (auto enhance, portrait magic, photo restore)
-
-### AI Chat
-- Rule-based (offline) → Ollama (offline) → OpenAI (opt-in cloud)
+| Area | Highlights |
+|------|------------|
+| **Enhance** | BiRefNet / BRIA background removal, custom image backgrounds, SAM + LaMa object removal, Real-ESRGAN 2×/4× upscale |
+| **Edit** | Compare slider, undo/redo, crop & rotate, bokeh, clone stamp, prism / vignette / grain, AI repair |
+| **Portrait** | Magic preset, face-aware skin smooth, red-eye, teeth whiten, simple hair tint & lip/blush |
+| **Looks** | 30 filter presets with thumbnail gallery |
+| **Batch** | Folder batch (auto enhance, portrait magic, photo restore) |
+| **AI Chat** | Rule-based (offline) → Ollama (offline) → OpenAI (opt-in cloud) |
+| **Desktop** | PyInstaller + WebView2 `.exe`; models download once to `%APPDATA%\PhotoEnhancer\models\` |
 
 ## Privacy-first
 
@@ -50,7 +32,23 @@
 
 ## Quick start
 
-### One-click (Windows)
+### Windows desktop app (recommended)
+
+Pre-built binary (not in git — build locally or download from a [GitHub Release](docs/RELEASE.md)):
+
+```
+dist\PhotoEnhancer\PhotoEnhancer.exe
+```
+
+Build it yourself:
+
+```bat
+build.bat
+```
+
+Output: `dist\PhotoEnhancer\PhotoEnhancer.exe`
+
+### Browser launcher
 
 ```bat
 start.bat
@@ -62,44 +60,35 @@ Or:
 python launcher.py
 ```
 
-Opens **http://127.0.0.1:8000** after building the GUI on first run.
-
-### Manual setup
-
-```bash
-# Backend
-cd backend
-python -m venv venv
-venv\Scripts\activate          # Windows
-pip install -r requirements.txt
-
-# Frontend
-cd ../frontend
-npm install
-npm run build
-```
+Opens **http://127.0.0.1:8000** after building the frontend on first run.
 
 ### Dev mode
 
 ```bash
-# Terminal 1
-cd backend && venv\Scripts\uvicorn main:app --reload --port 8000
+# Terminal 1 — backend
+cd backend
+python -m venv venv
+venv\Scripts\activate          # Windows
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
 
-# Terminal 2
-cd frontend && npm run dev
+# Terminal 2 — frontend
+cd frontend
+npm install
+npm run dev
 ```
 
 Open http://localhost:5173
 
-## Build Windows desktop app
+### Manual production build (frontend only)
 
-```bat
-build.bat
+```bash
+cd frontend
+npm install
+npm run build
 ```
 
-Output: `dist\PhotoEnhancer\PhotoEnhancer.exe` (not committed — too large).
-
-See README build section for WebView2, PyInstaller, and optional Inno Setup installer.
+Then run the backend and open http://127.0.0.1:8000
 
 ## System requirements
 
@@ -151,6 +140,10 @@ Object selection uses **Ultralytics** (SAM 2.1 + YOLOv8), which is **AGPL-3.0**.
 3. Replacing SAM/YOLO with permissively licensed alternatives
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full attribution.
+
+## Releases
+
+Windows `.exe` bundles are attached to GitHub Releases (too large for the repo). See [docs/RELEASE.md](docs/RELEASE.md).
 
 ## License
 
