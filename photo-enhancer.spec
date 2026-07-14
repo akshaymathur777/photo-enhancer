@@ -82,7 +82,7 @@ for pkg in (
         pass
 
 binaries = []
-for pkg in ("onnxruntime", "torch", "cv2", "rembg"):
+for pkg in ("onnxruntime", "torch", "cv2", "rembg", "matplotlib", "certifi"):
     try:
         _datas, _binaries, _hidden = collect_all(pkg)
         datas.extend(_datas)
@@ -104,7 +104,6 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         "tkinter",
-        "matplotlib",
         "notebook",
         "jupyter",
         "IPython",
