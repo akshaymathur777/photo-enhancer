@@ -118,6 +118,25 @@ Models are stored in:
 %APPDATA%\PhotoEnhancer\models\
 ```
 
+Download diagnostics are written to:
+
+```
+%APPDATA%\PhotoEnhancer\logs\download.log
+```
+
+## Troubleshooting: models won't download
+
+If **Download all** stalls or fails in the packaged app:
+
+1. **Internet** — HuggingFace and GitHub must be reachable (no captive portal). Try a browser on the same PC.
+2. **Firewall / antivirus** — Allow `PhotoEnhancer.exe` outbound HTTPS. SSL inspection often breaks large downloads.
+3. **Disk space** — Keep at least **10 GB free** on the drive that holds `%APPDATA%` (usually `C:`).
+4. **Permissions** — Models always save under `%APPDATA%\PhotoEnhancer\`, not the install folder. You do **not** need admin rights, but the AppData path must be writable.
+5. **Install location** — Prefer a portable folder or `%LOCALAPPDATA%\Programs` over `C:\Program Files` if your IT policy blocks writes. The app writes models to AppData either way.
+6. **Logs** — Open `%APPDATA%\PhotoEnhancer\logs\download.log` and retry once; share the last lines if you report a bug.
+
+**v0.1.0 manual workaround:** delete `%APPDATA%\PhotoEnhancer\models\` and `%APPDATA%\PhotoEnhancer\Ultralytics\`, then upgrade to the latest build and choose **Download all now** again. Or use **Download as I go** — each feature pulls only the model it needs.
+
 ## Model downloads
 
 Models are **not** in git. First use of each feature triggers download (~200 MB – 1 GB per model, ~6–8 GB total if everything is used). You can also prefetch all models from the in-app **Models** panel.

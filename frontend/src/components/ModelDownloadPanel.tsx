@@ -26,6 +26,21 @@ function formatMb(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function errorHint(kind?: string | null): string | null {
+  switch (kind) {
+    case "network":
+      return "Check your internet connection, VPN, or firewall. Corporate proxies may block HuggingFace or GitHub.";
+    case "permission":
+      return "Do not install to Program Files if your account cannot write there. Models save to %APPDATA%\\PhotoEnhancer\\models\\.";
+    case "disk":
+      return "Free at least 10 GB on the drive that holds your AppData folder, then retry.";
+    case "ssl":
+      return "Antivirus HTTPS scanning can break downloads. Temporarily allow PhotoEnhancer.exe or disable SSL inspection.";
+    default:
+      return null;
+  }
+}
+
 function statusIcon(status: string) {
   if (status === "present") return <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />;
   if (status === "downloading") return <Loader2 className="w-4 h-4 text-accent animate-spin shrink-0" />;
@@ -93,6 +108,7 @@ export function ModelDownloadPanel({ mode, onClose }: ModelDownloadPanelProps) {
 
   const handleRetry = async () => {
     setActionError(null);
+    setProgress((prev) => (prev ? { ...prev, status: "idle", error: null, error_kind: null } : prev));
     await handleDownloadAll();
   };
 
@@ -192,6 +208,14 @@ export function ModelDownloadPanel({ mode, onClose }: ModelDownloadPanelProps) {
               {progress?.status === "error" && (
                 <div className="rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 px-3 py-2 text-sm space-y-2">
                   <p>{progress.error ?? "Download failed. Check your internet connection and try again."}</p>
+                  {errorHint(progress.error_kind) && (
+                    <p className="text-xs text-red-200/80">{errorHint(progress.error_kind)}</p>
+                  )}
+                  {status?.logs_dir && (
+                    <p className="text-[11px] text-red-200/60">
+                      Details: {status.logs_dir}\download.log
+                    </p>
+                  )}
                   <button
                     type="button"
                     onClick={() => void handleRetry()}

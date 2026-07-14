@@ -169,7 +169,19 @@ def wait_for_downloads(url: str, window, timeout_sec: float = 7200.0) -> None:
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         progress = _fetch_download_progress(url)
-        if progress is None or progress.get("status") != "downloading":
+        if progress is None:
+            return
+        if progress.get("status") == "error":
+            try:
+                err = progress.get("error") or "Model download failed."
+                window.evaluate_js(
+                    "document.getElementById('status').innerHTML = "
+                    f"{json.dumps('<strong>Model download failed</strong><br><span style=\"font-size:0.85rem\">' + err + '</span>')};"
+                )
+            except Exception:
+                pass
+            return
+        if progress.get("status") != "downloading":
             return
         try:
             window.evaluate_js(

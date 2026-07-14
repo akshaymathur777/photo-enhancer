@@ -2,25 +2,79 @@
 
 from __future__ import annotations
 
+import logging
+import shutil
 import sys
 import threading
+import time
+import traceback
+import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from paths import get_models_dir
+from paths import get_logs_dir, get_models_dir
 
-MODELS_DIR = get_models_dir()
-LAMA_ONNX = MODELS_DIR / "lama_fp32.onnx"
+DOWNLOAD_RETRIES = 3
+DOWNLOAD_BACKOFF_SEC = 2.0
+
+_progress_lock = threading.Lock()
+_download_thread: threading.Thread | None = None
+_logger_instance: logging.Logger | None = None
+
+
+def _get_download_logger() -> logging.Logger:
+    global _logger_instance
+    if _logger_instance is not None:
+        return _logger_instance
+
+    logs_dir = get_logs_dir()
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "download.log"
+
+    logger = logging.getLogger("photo_enhancer.download")
+    logger.setLevel(logging.DEBUG)
+    logger.handlers.clear()
+
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    )
+    logger.addHandler(handler)
+    logger.propagate = False
+    _logger_instance = logger
+    return logger
+
+
+def _log(level: int, message: str, *, exc: BaseException | None = None) -> None:
+    logger = _get_download_logger()
+    if exc is not None:
+        logger.log(level, "%s\n%s", message, traceback.format_exc())
+    else:
+        logger.log(level, message)
+
+
+def _models_dir() -> Path:
+    return get_models_dir()
+
+
+def _lama_onnx() -> Path:
+    return _models_dir() / "lama_fp32.onnx"
+
+
+def _lama_big_torch() -> Path:
+    return _models_dir() / "big-lama.pt"
+
+
+def _realesrgan_pth() -> Path:
+    return _models_dir() / "RealESRGAN_x4plus.pth"
+
+
 LAMA_URL = "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx"
-
-LAMA_BIG_TORCH = MODELS_DIR / "big-lama.pt"
 LAMA_BIG_TORCH_URL = (
     "https://github.com/enesmsahin/simple-lama-inpainting/releases/download/v0.1.0/big-lama.pt"
 )
-
-REALESRGAN_PTH = MODELS_DIR / "RealESRGAN_x4plus.pth"
 REALESRGAN_URL = (
     "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
 )
@@ -36,12 +90,6 @@ REMBG_MODEL_IDS = [
     "birefnet-general-lite",
 ]
 
-ULTRALYTICS_DIR = MODELS_DIR / "ultralytics"
-U2NET_DIR = MODELS_DIR / "u2net"
-
-_progress_lock = threading.Lock()
-_download_thread: threading.Thread | None = None
-
 
 @dataclass
 class ProgressState:
@@ -53,6 +101,7 @@ class ProgressState:
     percent: float = 0.0
     model_statuses: dict[str, str] = field(default_factory=dict)
     error: str | None = None
+    error_kind: str | None = None  # network | permission | disk | ssl | unknown
     message: str | None = None
 
 
@@ -62,18 +111,46 @@ _state = ProgressState()
 def _u2net_home() -> Path:
     import os
 
-    return Path(os.environ.get("U2NET_HOME", str(U2NET_DIR)))
+    return Path(os.environ["U2NET_HOME"])
 
 
 def _ultralytics_home() -> Path:
     import os
 
-    return Path(os.environ.get("ULTRALYTICS_HOME", str(ULTRALYTICS_DIR)))
+    return Path(os.environ["ULTRALYTICS_HOME"])
+
+
+def _ultralytics_weight_candidates(name: str) -> list[Path]:
+    home = _ultralytics_home()
+    models = _models_dir()
+    candidates = [
+        home / name,
+        home / "weights" / name,
+        models / name,
+        Path.cwd() / name,
+        Path.cwd() / "weights" / name,
+    ]
+    try:
+        from ultralytics.utils import SETTINGS
+
+        weights_dir = Path(str(SETTINGS.get("weights_dir", "")))
+        if weights_dir.name:
+            candidates.extend([weights_dir / name, weights_dir.resolve() / name])
+    except Exception:
+        pass
+    # Preserve order while deduplicating
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in candidates:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            unique.append(path)
+    return unique
 
 
 def _find_ultralytics_weight(name: str) -> Path | None:
-    home = _ultralytics_home()
-    for candidate in (home / name, home / "weights" / name, MODELS_DIR / name):
+    for candidate in _ultralytics_weight_candidates(name):
         if candidate.is_file():
             return candidate
     return None
@@ -83,24 +160,129 @@ def _rembg_present(model_id: str) -> bool:
     return (_u2net_home() / f"{model_id}.onnx").is_file()
 
 
+def _classify_error(exc: BaseException) -> tuple[str, str]:
+    """Return (user_message, error_kind)."""
+    raw = str(exc).strip() or exc.__class__.__name__
+    lowered = raw.lower()
+
+    if isinstance(exc, PermissionError) or "permission" in lowered or "access is denied" in lowered:
+        return (
+            "Cannot write to the models folder. Install Photo Enhancer in a user-writable location "
+            f"or check permissions for {_models_dir()}.",
+            "permission",
+        )
+    if isinstance(exc, OSError) and getattr(exc, "errno", None) == 28:
+        return (
+            "Not enough disk space to download models. Free at least 10 GB and try again.",
+            "disk",
+        )
+    if "no space left" in lowered or "disk full" in lowered:
+        return (
+            "Not enough disk space to download models. Free at least 10 GB and try again.",
+            "disk",
+        )
+    if isinstance(exc, urllib.error.URLError) and isinstance(getattr(exc, "reason", None), ssl.SSLError):
+        return (
+            "Secure connection failed (SSL). Check antivirus/firewall settings or try again on a trusted network.",
+            "ssl",
+        )
+    if "certificate" in lowered or "ssl" in lowered or "certifi" in lowered:
+        return (
+            "Secure connection failed (SSL). Check antivirus/firewall settings or try again on a trusted network.",
+            "ssl",
+        )
+    if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError)) or "timed out" in lowered:
+        return (
+            "Network error while downloading models. Check your internet connection, firewall, or proxy settings.",
+            "network",
+        )
+    if "404" in lowered or "not found" in lowered:
+        return (
+            f"Download URL is unavailable ({raw}). Check for an app update or try again later.",
+            "network",
+        )
+    return (f"Download failed: {raw}", "unknown")
+
+
+# Late import for ssl used in _classify_error
+import ssl  # noqa: E402
+
+
 def _download_rembg(model_id: str) -> None:
     from rembg.sessions import sessions
 
     session_cls = sessions.get(model_id)
     if session_cls is None:
         raise ValueError(f"Unknown rembg model: {model_id}")
-    session_cls.download_models()
+    last_exc: BaseException | None = None
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        try:
+            session_cls.download_models()
+            if not _rembg_present(model_id):
+                raise RuntimeError(f"rembg finished but {model_id}.onnx was not saved to {_u2net_home()}")
+            return
+        except Exception as exc:
+            last_exc = exc
+            _log(logging.WARNING, f"rembg {model_id} attempt {attempt}/{DOWNLOAD_RETRIES} failed: {exc}", exc=exc)
+            if attempt < DOWNLOAD_RETRIES:
+                time.sleep(DOWNLOAD_BACKOFF_SEC * attempt)
+    assert last_exc is not None
+    raise last_exc
+
+
+def _relocate_ultralytics_weight(name: str) -> Path:
+    """Ensure weight lives under our ultralytics models directory."""
+    dest = _ultralytics_home() / name
+    if dest.is_file():
+        return dest
+
+    found = _find_ultralytics_weight(name)
+    if found is None:
+        raise FileNotFoundError(
+            f"{name} was not found after download. Expected location: {dest}"
+        )
+
+    if found.resolve() != dest.resolve():
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(found), str(dest))
+        _log(logging.INFO, f"Moved {name} from {found} to {dest}")
+
+    return dest
 
 
 def _download_ultralytics(name: str) -> None:
-    if name.startswith("sam"):
-        from ultralytics.models.sam import SAM2Predictor
+    weights_dir = _ultralytics_home()
+    weights_dir.mkdir(parents=True, exist_ok=True)
 
-        SAM2Predictor(overrides=dict(conf=0.25, task="segment", mode="predict", imgsz=1024, model=name))
-    else:
-        from ultralytics import YOLO
+    dest = weights_dir / name
+    if dest.is_file():
+        return
 
-        YOLO(name)
+    last_exc: BaseException | None = None
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        try:
+            if name.startswith("sam"):
+                from ultralytics.models.sam import SAM2Predictor
+
+                SAM2Predictor(
+                    overrides=dict(conf=0.25, task="segment", mode="predict", imgsz=1024, model=name)
+                )
+            else:
+                from ultralytics import YOLO
+
+                YOLO(name)
+            return _relocate_ultralytics_weight(name)
+        except Exception as exc:
+            last_exc = exc
+            _log(
+                logging.WARNING,
+                f"ultralytics {name} attempt {attempt}/{DOWNLOAD_RETRIES} failed: {exc}",
+                exc=exc,
+            )
+            if attempt < DOWNLOAD_RETRIES:
+                time.sleep(DOWNLOAD_BACKOFF_SEC * attempt)
+    assert last_exc is not None
+    raise last_exc
 
 
 @dataclass(frozen=True)
@@ -123,17 +305,17 @@ def _build_registry() -> list[ModelEntry]:
             name="LaMa ONNX (Quick Remove)",
             size_estimate_mb=196,
             feature="Object removal (Quick)",
-            present_fn=lambda: LAMA_ONNX.is_file(),
-            download_fn=lambda: _download_direct(LAMA_URL, LAMA_ONNX, "LaMa ONNX (Quick Remove)", "lama_onnx"),
+            present_fn=lambda: _lama_onnx().is_file(),
+            download_fn=lambda: _download_direct(LAMA_URL, _lama_onnx(), "LaMa ONNX (Quick Remove)", "lama_onnx"),
         ),
         ModelEntry(
             id="lama_big",
             name="LaMa big (AI Remove)",
             size_estimate_mb=196,
             feature="Object removal (AI)",
-            present_fn=lambda: LAMA_BIG_TORCH.is_file(),
+            present_fn=lambda: _lama_big_torch().is_file(),
             download_fn=lambda: _download_direct(
-                LAMA_BIG_TORCH_URL, LAMA_BIG_TORCH, "LaMa big (AI Remove)", "lama_big"
+                LAMA_BIG_TORCH_URL, _lama_big_torch(), "LaMa big (AI Remove)", "lama_big"
             ),
         ),
         ModelEntry(
@@ -141,9 +323,9 @@ def _build_registry() -> list[ModelEntry]:
             name="Real-ESRGAN x4plus",
             size_estimate_mb=64,
             feature="Upscale 2× / 4×",
-            present_fn=lambda: REALESRGAN_PTH.is_file(),
+            present_fn=lambda: _realesrgan_pth().is_file(),
             download_fn=lambda: _download_direct(
-                REALESRGAN_URL, REALESRGAN_PTH, "Real-ESRGAN x4plus", "realesrgan"
+                REALESRGAN_URL, _realesrgan_pth(), "Real-ESRGAN x4plus", "realesrgan"
             ),
         ),
         ModelEntry(
@@ -255,7 +437,7 @@ def get_models_status() -> dict:
             }
         )
 
-    disk_used_bytes = _dir_size(MODELS_DIR)
+    disk_used_bytes = _dir_size(_models_dir())
     progress = get_download_progress()
 
     return {
@@ -266,7 +448,8 @@ def get_models_status() -> dict:
         "disk_used_bytes": disk_used_bytes,
         "disk_used_mb": round(disk_used_bytes / (1024 * 1024), 1),
         "total_estimate_mb": total_estimate_mb,
-        "models_dir": str(MODELS_DIR),
+        "models_dir": str(_models_dir()),
+        "logs_dir": str(get_logs_dir()),
         "download_in_progress": progress["status"] == "downloading",
     }
 
@@ -280,8 +463,11 @@ def _download_direct(url: str, dest: Path, label: str, model_id: str) -> None:
         bytes_downloaded=0,
         bytes_total=0,
         percent=0.0,
+        error=None,
+        error_kind=None,
         message=f"Downloading {label}…",
     )
+    _log(logging.INFO, f"Starting direct download: {label} -> {dest} from {url}")
     print(f"Downloading {label} to {dest}...", flush=True)
 
     def _report(block_num: int, block_size: int, total_size: int) -> None:
@@ -292,10 +478,36 @@ def _download_direct(url: str, dest: Path, label: str, model_id: str) -> None:
         else:
             _set_progress(bytes_downloaded=downloaded)
 
-    urllib.request.urlretrieve(url, dest, reporthook=_report)
-    sys.stderr.write("\n")
-    print(f"{label} downloaded.", flush=True)
-    _update_model_status(model_id, "present")
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    last_exc: BaseException | None = None
+
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        try:
+            if tmp.is_file():
+                tmp.unlink()
+            urllib.request.urlretrieve(url, tmp, reporthook=_report)
+            if not tmp.is_file() or tmp.stat().st_size == 0:
+                raise RuntimeError(f"Download produced an empty file for {label}")
+            tmp.replace(dest)
+            sys.stderr.write("\n")
+            print(f"{label} downloaded.", flush=True)
+            _log(logging.INFO, f"Completed direct download: {label} ({dest.stat().st_size} bytes)")
+            _update_model_status(model_id, "present")
+            return
+        except Exception as exc:
+            last_exc = exc
+            _log(
+                logging.WARNING,
+                f"Direct download {label} attempt {attempt}/{DOWNLOAD_RETRIES} failed: {exc}",
+                exc=exc,
+            )
+            if tmp.is_file():
+                tmp.unlink(missing_ok=True)
+            if attempt < DOWNLOAD_RETRIES:
+                time.sleep(DOWNLOAD_BACKOFF_SEC * attempt)
+
+    assert last_exc is not None
+    raise last_exc
 
 
 def _download_ultralytics_tracked(weight: str, model_id: str, label: str) -> None:
@@ -306,11 +518,15 @@ def _download_ultralytics_tracked(weight: str, model_id: str, label: str) -> Non
         bytes_downloaded=0,
         bytes_total=0,
         percent=0.0,
+        error=None,
+        error_kind=None,
         message=f"Downloading {label}…",
     )
-    _download_ultralytics(weight)
-    _set_progress(percent=100.0)
+    _log(logging.INFO, f"Starting ultralytics download: {label} ({weight})")
+    path = _download_ultralytics(weight)
+    _set_progress(percent=100.0, bytes_downloaded=path.stat().st_size, bytes_total=path.stat().st_size)
     _update_model_status(model_id, "present")
+    _log(logging.INFO, f"Completed ultralytics download: {label} at {path}")
 
 
 def _download_rembg_tracked(model_id: str, registry_id: str, label: str) -> None:
@@ -321,11 +537,15 @@ def _download_rembg_tracked(model_id: str, registry_id: str, label: str) -> None
         bytes_downloaded=0,
         bytes_total=0,
         percent=0.0,
+        error=None,
+        error_kind=None,
         message=f"Downloading {label}…",
     )
+    _log(logging.INFO, f"Starting rembg download: {label} ({model_id})")
     _download_rembg(model_id)
     _set_progress(percent=100.0)
     _update_model_status(registry_id, "present")
+    _log(logging.INFO, f"Completed rembg download: {label}")
 
 
 def _download_entry(entry: ModelEntry) -> None:
@@ -333,12 +553,15 @@ def _download_entry(entry: ModelEntry) -> None:
         _update_model_status(entry.id, "present")
         return
     entry.download_fn()
+    if not entry.present_fn():
+        raise RuntimeError(f"{entry.name} download finished but the model file is still missing")
 
 
 def _run_downloads(entries: list[ModelEntry]) -> None:
     global _download_thread
     try:
-        _set_progress(status="downloading", error=None, message="Starting downloads…")
+        _models_dir().mkdir(parents=True, exist_ok=True)
+        _set_progress(status="downloading", error=None, error_kind=None, message="Starting downloads…")
         _refresh_all_statuses()
         pending = [e for e in entries if not e.present_fn()]
         total = len(pending)
@@ -348,12 +571,25 @@ def _run_downloads(entries: list[ModelEntry]) -> None:
                 percent=(idx / total * 100.0) if total else 100.0,
             )
             _download_entry(entry)
-        _set_progress(status="complete", percent=100.0, message="All models downloaded.", current_model_id=None)
+        still_missing = [e.name for e in REGISTRY if not e.present_fn()]
+        if still_missing:
+            raise RuntimeError(f"Some models are still missing after download: {', '.join(still_missing[:3])}")
+        _set_progress(
+            status="complete",
+            percent=100.0,
+            message="All models downloaded.",
+            current_model_id=None,
+            error=None,
+            error_kind=None,
+        )
         _refresh_all_statuses()
+        _log(logging.INFO, "Background download batch completed successfully")
     except Exception as exc:
+        user_msg, kind = _classify_error(exc)
         if _state.current_model_id:
             _update_model_status(_state.current_model_id, "error")
-        _set_progress(status="error", error=str(exc), message=f"Download failed: {exc}")
+        _set_progress(status="error", error=user_msg, error_kind=kind, message=f"Download failed: {user_msg}")
+        _log(logging.ERROR, f"Background download failed: {user_msg}", exc=exc)
     finally:
         with _progress_lock:
             global _download_thread
@@ -365,6 +601,8 @@ def _start_background(entries: list[ModelEntry]) -> bool:
     with _progress_lock:
         if _download_thread is not None and _download_thread.is_alive():
             return False
+        if _state.status == "error":
+            _set_progress(status="idle", error=None, error_kind=None, message=None)
         _download_thread = threading.Thread(
             target=_run_downloads,
             args=(entries,),
@@ -404,7 +642,7 @@ def download_all_models() -> dict:
 def _track_on_demand(model_id: str, label: str, fn: Callable[[], None]) -> None:
     progress = get_download_progress()
     if progress["status"] != "downloading":
-        _set_progress(status="downloading", error=None, message=f"Downloading {label}…")
+        _set_progress(status="downloading", error=None, error_kind=None, message=f"Downloading {label}…")
     _update_model_status(model_id, "downloading")
     _set_progress(current_model_id=model_id, current_model_name=label)
     try:
@@ -414,45 +652,46 @@ def _track_on_demand(model_id: str, label: str, fn: Callable[[], None]) -> None:
         bg_active = _download_thread is not None and _download_thread.is_alive()
         if current["status"] != "downloading" or not bg_active:
             _set_progress(status="idle", message=None, current_model_id=None, percent=0.0)
-    except Exception:
+    except Exception as exc:
+        user_msg, kind = _classify_error(exc)
         _update_model_status(model_id, "error")
-        _set_progress(status="error")
-        raise
+        _set_progress(status="error", error=user_msg, error_kind=kind, message=user_msg)
+        _log(logging.ERROR, f"On-demand download failed for {label}: {user_msg}", exc=exc)
+        raise RuntimeError(user_msg) from exc
 
 
 def ensure_lama_model() -> Path:
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    if not LAMA_ONNX.exists():
+    _models_dir().mkdir(parents=True, exist_ok=True)
+    path = _lama_onnx()
+    if not path.exists():
         _track_on_demand(
             "lama_onnx",
             "LaMa ONNX (Quick Remove)",
-            lambda: _download_direct(LAMA_URL, LAMA_ONNX, "LaMa ONNX (Quick Remove)", "lama_onnx"),
+            lambda: _download_direct(LAMA_URL, path, "LaMa ONNX (Quick Remove)", "lama_onnx"),
         )
-    return LAMA_ONNX
+    return path
 
 
 def ensure_lama_big_torch() -> Path:
     """PyTorch JIT big-LaMa (~200 MB) for AI Remove mode."""
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    if not LAMA_BIG_TORCH.exists():
+    _models_dir().mkdir(parents=True, exist_ok=True)
+    path = _lama_big_torch()
+    if not path.exists():
         _track_on_demand(
             "lama_big",
             "LaMa big (AI Remove)",
-            lambda: _download_direct(
-                LAMA_BIG_TORCH_URL, LAMA_BIG_TORCH, "LaMa big (AI Remove)", "lama_big"
-            ),
+            lambda: _download_direct(LAMA_BIG_TORCH_URL, path, "LaMa big (AI Remove)", "lama_big"),
         )
-    return LAMA_BIG_TORCH
+    return path
 
 
 def ensure_realesrgan_model() -> Path:
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    if not REALESRGAN_PTH.exists():
+    _models_dir().mkdir(parents=True, exist_ok=True)
+    path = _realesrgan_pth()
+    if not path.exists():
         _track_on_demand(
             "realesrgan",
             "Real-ESRGAN x4plus",
-            lambda: _download_direct(
-                REALESRGAN_URL, REALESRGAN_PTH, "Real-ESRGAN x4plus", "realesrgan"
-            ),
+            lambda: _download_direct(REALESRGAN_URL, path, "Real-ESRGAN x4plus", "realesrgan"),
         )
-    return REALESRGAN_PTH
+    return path

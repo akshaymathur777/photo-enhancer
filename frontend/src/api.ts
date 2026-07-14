@@ -451,8 +451,11 @@ export interface ModelsStatus {
   disk_used_mb: number;
   total_estimate_mb: number;
   models_dir: string;
+  logs_dir?: string;
   download_in_progress: boolean;
 }
+
+export type DownloadErrorKind = "network" | "permission" | "disk" | "ssl" | "unknown";
 
 export interface DownloadProgress {
   status: "idle" | "downloading" | "complete" | "error";
@@ -463,6 +466,7 @@ export interface DownloadProgress {
   percent: number;
   model_statuses: Record<string, string>;
   error: string | null;
+  error_kind?: DownloadErrorKind | null;
   message: string | null;
 }
 

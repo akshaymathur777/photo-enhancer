@@ -58,6 +58,8 @@ hiddenimports = [
     "PIL._tkinter_finder",
     "multipart",
     "dotenv",
+    "certifi",
+    "pooch",
 ]
 
 for pkg in (
