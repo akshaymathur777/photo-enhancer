@@ -22,8 +22,23 @@ export interface ChatStatus {
   ai_enabled: boolean;
   backend: ChatBackend;
   ollama_reachable: boolean;
+  ollama_model_present: boolean;
   ollama_model: string | null;
+  ollama_model_configured?: string | null;
   openai_available: boolean;
+}
+
+/** Hint shown when chat is on the rule-based "Basic" engine. */
+export function basicChatHint(status: ChatStatus): string | null {
+  if (status.backend !== "rules") return null;
+  if (!status.ollama_reachable) {
+    return "For Offline AI: install Ollama (ollama.com), keep it running, then run: ollama pull llama3.2:3b";
+  }
+  if (!status.ollama_model_present) {
+    const configured = status.ollama_model_configured ?? "llama3.2:3b";
+    return `Ollama is running but no chat model is ready. Run: ollama pull ${configured} — or add OLLAMA_MODEL=<your-model> to .env next to the app.`;
+  }
+  return null;
 }
 
 export interface ChatResponse {
@@ -69,6 +84,7 @@ export async function fetchChatStatus(): Promise<ChatStatus> {
     ai_enabled: false,
     backend: "rules",
     ollama_reachable: false,
+    ollama_model_present: false,
     ollama_model: null,
     openai_available: false,
   };

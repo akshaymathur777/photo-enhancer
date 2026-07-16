@@ -141,6 +141,25 @@ If **Download all** stalls or fails in the packaged app:
 
 Models are **not** in git. First use of each feature triggers download (~200 MB – 1 GB per model, ~6–8 GB total if everything is used). You can also prefetch all models from the in-app **Models** panel.
 
+## Troubleshooting: AI Chat shows "Basic" (not Offline AI)
+
+The chat badge is **Basic** when the backend is the built-in rule parser (`rules`). **Offline AI** needs a local Ollama model.
+
+1. **Install and start Ollama** — [ollama.com](https://ollama.com). On Windows, open the Ollama app or run any `ollama` command so the server is listening on `http://127.0.0.1:11434`.
+2. **Pull a chat model** (one-time, ~2 GB):
+   ```powershell
+   ollama pull llama3.2:3b
+   ```
+   Any pulled model works on current builds (the app auto-uses the first available model). Older `.exe` builds before the auto-fallback fix require the configured model to match — either pull `llama3.2:3b` or set `OLLAMA_MODEL` (step 3).
+3. **Optional `.env`** — copy `.env.example` to `.env` beside `PhotoEnhancer.exe` (packaged app) or the project root (dev). Example if you already use another model:
+   ```
+   OLLAMA_MODEL=qwen2.5:7b-instruct-q4_K_M
+   ```
+4. **Restart Photo Enhancer** after Ollama is running. The chat panel rechecks every 15s; refresh the page if needed.
+5. **Verify** — with the app running, open `http://127.0.0.1:8000/api/chat/status` in a browser. You want `"backend":"ollama"` and a non-null `"ollama_model"`.
+
+`CHAT_BACKEND=rules` in `.env` forces Basic even when Ollama is available.
+
 ## Configuration
 
 Copy `.env.example` to `.env` in the project root (optional):

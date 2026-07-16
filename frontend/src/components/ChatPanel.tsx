@@ -12,8 +12,9 @@ import {
 import { useEffect, useRef, useState } from "react";
 import {
   base64ToBlob,
-  ChatBackend,
+  basicChatHint,
   ChatMessage,
+  ChatStatus,
   DEFAULT_SUGGESTIONS,
   fetchChatStatus,
   sendChatMessage,
@@ -37,17 +38,35 @@ export function ChatPanel({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [backend, setBackend] = useState<ChatBackend>("rules");
-  const [ollamaModel, setOllamaModel] = useState<string | null>(null);
+  const [chatStatus, setChatStatus] = useState<ChatStatus>({
+    ai_enabled: false,
+    backend: "rules",
+    ollama_reachable: false,
+    ollama_model_present: false,
+    ollama_model: null,
+    openai_available: false,
+  });
   const [suggestions, setSuggestions] = useState<string[]>(DEFAULT_SUGGESTIONS);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { backend, ollama_model: ollamaModel } = chatStatus;
+  const basicHint = basicChatHint(chatStatus);
+
+  const applyChatStatus = (s: ChatStatus) => setChatStatus(s);
 
   useEffect(() => {
-    fetchChatStatus().then((s) => {
-      setBackend(s.backend);
-      setOllamaModel(s.ollama_model);
-    });
+    let cancelled = false;
+    const refresh = () => {
+      fetchChatStatus().then((s) => {
+        if (!cancelled) applyChatStatus(s);
+      });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -76,7 +95,9 @@ export function ChatPanel({
       };
       setMessages([...nextHistory, assistantMsg]);
       setSuggestions(res.suggestions?.length ? res.suggestions : DEFAULT_SUGGESTIONS);
-      if (res.backend) setBackend(res.backend);
+      if (res.backend) {
+        setChatStatus((prev) => ({ ...prev, backend: res.backend! }));
+      }
 
       if (res.needs_clicks) {
         onNeedsObjectRemoval();
@@ -131,6 +152,12 @@ export function ChatPanel({
           </span>
         )}
       </div>
+
+      {basicHint && (
+        <p className="px-4 py-2 text-[11px] leading-relaxed text-amber-300/90 bg-amber-500/5 border-b border-amber-500/20 shrink-0">
+          {basicHint}
+        </p>
+      )}
 
       <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
         {messages.length === 0 && (
