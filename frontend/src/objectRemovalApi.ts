@@ -53,9 +53,7 @@ export async function removeObjects(
   const form = new FormData();
   form.append("file", file);
   form.append("mode", options.mode ?? "balanced");
-  if (options.inpaintMode) {
-    form.append("inpaint_mode", options.inpaintMode);
-  }
+  form.append("inpaint_mode", options.inpaintMode ?? "ai");
   form.append("edge_softness", String(options.edgeSoftness ?? 1.0));
 
   if (options.maskFile) {

@@ -87,6 +87,8 @@ def _get_lama_onnx_session():
 
 def _lama_onnx_output_to_rgb(raw: np.ndarray) -> np.ndarray:
     hwc = raw.transpose(1, 2, 0)
+    if float(hwc.max()) <= 1.0:
+        hwc = hwc * 255.0
     return np.clip(hwc, 0, 255).astype(np.uint8)
 
 

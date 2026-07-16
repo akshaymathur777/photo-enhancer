@@ -82,12 +82,15 @@ export function ObjectRemovalEditor({
   const [layout, setLayout] = useState<ImageLayout | null>(null);
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("smart");
   const [inpaintMode, setInpaintMode] = useState<InpaintMode>(() => defaultInpaintMode(mode));
+  const [inpaintTouched, setInpaintTouched] = useState(false);
   const [brushSize, setBrushSize] = useState(24);
   const [hasBrushMask, setHasBrushMask] = useState(false);
 
   useEffect(() => {
-    setInpaintMode(defaultInpaintMode(mode));
-  }, [mode]);
+    if (!inpaintTouched) {
+      setInpaintMode(defaultInpaintMode(mode));
+    }
+  }, [mode, inpaintTouched]);
 
   const refreshLayout = useCallback(() => {
     const img = imgRef.current;
@@ -414,7 +417,10 @@ export function ObjectRemovalEditor({
         <span className="text-xs text-gray-500 uppercase tracking-wide">Inpaint</span>
         <button
           type="button"
-          onClick={() => setInpaintMode("ai")}
+          onClick={() => {
+            setInpaintTouched(true);
+            setInpaintMode("ai");
+          }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
             inpaintMode === "ai"
               ? "bg-purple-600/20 text-purple-300 border border-purple-600/40"
@@ -426,7 +432,10 @@ export function ObjectRemovalEditor({
         </button>
         <button
           type="button"
-          onClick={() => setInpaintMode("quick")}
+          onClick={() => {
+            setInpaintTouched(true);
+            setInpaintMode("quick");
+          }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
             inpaintMode === "quick"
               ? "bg-amber-600/20 text-amber-300 border border-amber-600/40"
@@ -437,6 +446,12 @@ export function ObjectRemovalEditor({
           Quick
         </button>
       </div>
+
+      {inpaintMode === "quick" && (
+        <p className="text-xs text-amber-400/90 bg-amber-950/30 border border-amber-700/30 rounded-lg px-3 py-2">
+          Quick mode uses a fast 512px preview model — lower quality than AI Remove. Switch to AI Remove for best results.
+        </p>
+      )}
 
       <div
         ref={containerRef}

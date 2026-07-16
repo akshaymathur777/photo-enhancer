@@ -76,10 +76,12 @@ def resolve_removal_mode(mode: str | None) -> str:
 
 def resolve_inpaint_mode(global_mode: str | None, explicit: str | None = None) -> str:
     """Map UI/global presets to inpaint backend: ai | quick."""
+    if explicit is not None:
+        explicit = str(explicit).strip().lower()
     if explicit in ("ai", "quick"):
         return explicit
     preset = resolve_removal_mode(global_mode)
-    if preset in ("fast", "quick"):
+    if preset == "quick":
         return "quick"
     return "ai"
 

@@ -55,7 +55,7 @@ def _best_sam_mask_from_results(
     w: int,
     click_pt: list[float] | None = None,
 ) -> np.ndarray | None:
-    """Pick the highest-confidence SAM mask (multimask), optionally preferring masks over the click."""
+    """Pick the best SAM multimask: must cover the click, then prefer confidence + area."""
     import cv2
 
     if not results:
@@ -86,14 +86,25 @@ def _best_sam_mask_from_results(
     if click_pt is not None:
         cx, cy = int(round(click_pt[0])), int(round(click_pt[1]))
 
+    img_area = float(h * w)
     for i in range(n_masks):
         mask_i = _mask_tensor_to_numpy(data[i])
         if mask_i.shape != (h, w):
             mask_i = cv2.resize(mask_i.astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
 
         score = float(scores[i]) if scores is not None else 0.5
-        if cx is not None and 0 <= cx < w and 0 <= cy < h and mask_i[cy, cx] <= 0.5:
-            score -= 0.5
+        covers_click = (
+            cx is not None
+            and cy is not None
+            and 0 <= cx < w
+            and 0 <= cy < h
+            and mask_i[cy, cx] > 0.5
+        )
+        if not covers_click:
+            score -= 1.0
+        else:
+            area_frac = float((mask_i > 0.5).sum()) / img_area
+            score += min(0.35, area_frac * 0.6)
 
         if score > best_score:
             best_score = score
@@ -167,18 +178,16 @@ def auto_detect_people_mask(image: Image.Image, conf: float = 0.35) -> Image.Ima
     return Image.fromarray(combined, mode="L")
 
 
-def refine_mask(
+def refine_mask_hard(
     mask: Image.Image,
     dilate_px: int = 6,
-    feather_px: int = 10,
     edge_softness: float = 1.0,
-) -> Image.Image:
-    """Refine mask edges: close holes, smooth boundary, dilate slightly, distance-based feather."""
+) -> np.ndarray:
+    """Close holes, smooth boundary, and dilate — returns a hard 0/255 mask for inpainting."""
     import cv2
 
     softness = max(0.5, min(float(edge_softness), 2.0))
     dilate = max(0, int(round(dilate_px * softness)))
-    feather = max(1, int(round(feather_px * softness)))
 
     arr = np.array(mask.convert("L"))
     binary = (arr > 127).astype(np.uint8)
@@ -194,21 +203,21 @@ def refine_mask(
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
         binary = cv2.dilate(binary, kernel, iterations=1)
 
-    soft = binary.astype(np.float32)
-    soft = cv2.bilateralFilter(soft, d=9, sigmaColor=30, sigmaSpace=30)
+    return binary * 255
 
-    dist_in = cv2.distanceTransform((soft > 0.5).astype(np.uint8), cv2.DIST_L2, 5)
-    dist_out = cv2.distanceTransform((soft <= 0.5).astype(np.uint8), cv2.DIST_L2, 5)
-    signed = dist_in - dist_out
-    ramp = max(feather, 1)
-    arr = np.clip((signed + ramp) / (2.0 * ramp), 0.0, 1.0)
-    arr = (arr * 255.0).astype(np.uint8)
 
-    if feather > 1:
-        k = feather if feather % 2 == 1 else feather + 1
-        arr = cv2.GaussianBlur(arr, (k, k), sigmaX=feather * 0.2)
-
-    return Image.fromarray(arr, mode="L")
+def refine_mask(
+    mask: Image.Image,
+    dilate_px: int = 6,
+    feather_px: int = 10,
+    edge_softness: float = 1.0,
+) -> Image.Image:
+    """Refine mask edges for preview/tests — hard core + single distance-based feather."""
+    softness = max(0.5, min(float(edge_softness), 2.0))
+    feather = max(4, int(round(feather_px * softness)))
+    hard = refine_mask_hard(mask, dilate_px=dilate_px, edge_softness=edge_softness)
+    soft = _build_blend_mask(hard, feather)
+    return Image.fromarray((soft * 255.0).astype(np.uint8), mode="L")
 
 
 def _build_blend_mask(hard_mask: np.ndarray, feather_px: int) -> np.ndarray:
@@ -310,8 +319,8 @@ def inpaint_objects(
     if msk.max() == 0:
         return image.convert("RGB")
 
-    refined = np.array(refine_mask(mask, edge_softness=edge_softness))
-    ys, xs = np.where(refined > 10)
+    hard_mask = refine_mask_hard(mask, edge_softness=edge_softness)
+    ys, xs = np.where(hard_mask > 127)
     if len(xs) == 0:
         return image.convert("RGB")
 
@@ -324,28 +333,28 @@ def inpaint_objects(
     y1 = min(h, ys.max() + pad)
 
     crop_rgb = rgb[y0:y1, x0:x1].copy()
-    crop_msk = refined[y0:y1, x0:x1].copy()
+    crop_hard = hard_mask[y0:y1, x0:x1].copy()
     feather_px = max(6, int(round(10 * max(0.5, min(edge_softness, 2.0)))))
     use_seamless = mode == "ai"
 
     backend = get_backend(mode)
     try:
-        inpainted_crop = backend.inpaint_crop(crop_rgb, crop_msk)
-    except InpaintError:
-        if mode == "ai":
+        inpainted_crop = backend.inpaint_crop(crop_rgb, crop_hard)
+    except InpaintError as exc:
+        if mode == "ai" and "blank white fill" in str(exc).lower():
             try:
                 from services.inpaint_backends import QuickRemoveBackend
 
-                inpainted_crop = QuickRemoveBackend().inpaint_crop(crop_rgb, crop_msk)
+                inpainted_crop = QuickRemoveBackend().inpaint_crop(crop_rgb, crop_hard)
             except InpaintError:
-                return image.convert("RGB")
+                raise
         else:
-            return image.convert("RGB")
+            raise
 
-    seamless = _try_seamless_blend(crop_rgb, inpainted_crop, crop_msk) if use_seamless else None
+    seamless = _try_seamless_blend(crop_rgb, inpainted_crop, crop_hard) if use_seamless else None
     base_patch = seamless if seamless is not None else inpainted_crop
 
-    blend = _build_blend_mask(crop_msk, feather_px)
+    blend = _build_blend_mask(crop_hard, feather_px)
     patch = (
         base_patch.astype(np.float32) * blend[:, :, None]
         + crop_rgb.astype(np.float32) * (1.0 - blend[:, :, None])
@@ -353,7 +362,7 @@ def inpaint_objects(
     patch = _smooth_transition_band(patch, crop_rgb, blend)
 
     if mode == "ai":
-        patch = _ai_edge_polish(patch, crop_rgb, crop_msk, blend)
+        patch = _ai_edge_polish(patch, crop_rgb, crop_hard, blend)
 
     result = rgb.copy()
     result[y0:y1, x0:x1] = patch
