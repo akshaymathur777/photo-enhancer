@@ -59,7 +59,7 @@ from services.object_removal import (
 from services.settings import get_max_output_mp, get_settings_payload, set_max_output_mp_from_megapixels
 from services.upscale_limits import max_allowed_scale, validate_max_output_mp
 
-app = FastAPI(title="Photo Enhancer", version="0.1.0")
+app = FastAPI(title="Photo Enhancer", version="0.1.2")
 
 DIST = get_frontend_dist()
 
