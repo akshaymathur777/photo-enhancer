@@ -55,7 +55,7 @@ def _best_sam_mask_from_results(
     w: int,
     click_pt: list[float] | None = None,
 ) -> np.ndarray | None:
-    """Pick the best SAM multimask: must cover the click, then prefer confidence + area."""
+    """Pick the best SAM multimask: must cover the click, then prefer confidence + compactness."""
     import cv2
 
     if not results:
@@ -104,7 +104,14 @@ def _best_sam_mask_from_results(
             score -= 1.0
         else:
             area_frac = float((mask_i > 0.5).sum()) / img_area
-            score += min(0.35, area_frac * 0.6)
+            # Prefer person-sized masks; penalize sky/background blobs that swallow the scene.
+            if area_frac > 0.40:
+                score -= 0.55
+            elif area_frac > 0.25:
+                score -= 0.25
+            else:
+                compact = 1.0 - min(1.0, area_frac / 0.22)
+                score += 0.30 * compact
 
         if score > best_score:
             best_score = score
@@ -213,8 +220,7 @@ def refine_mask(
     edge_softness: float = 1.0,
 ) -> Image.Image:
     """Refine mask edges for preview/tests — hard core + single distance-based feather."""
-    softness = max(0.5, min(float(edge_softness), 2.0))
-    feather = max(4, int(round(feather_px * softness)))
+    feather = _blend_feather_px(edge_softness)
     hard = refine_mask_hard(mask, dilate_px=dilate_px, edge_softness=edge_softness)
     soft = _build_blend_mask(hard, feather)
     return Image.fromarray((soft * 255.0).astype(np.uint8), mode="L")
@@ -285,7 +291,17 @@ def _try_seamless_blend(
 
 
 def _crop_padding(bbox_w: int, bbox_h: int, img_h: int, img_w: int) -> int:
-    return max(96, int(max(bbox_w, bbox_h) * 0.28), int(max(img_h, img_w) * 0.05))
+    long_side = max(img_h, img_w)
+    return max(
+        128,
+        int(max(bbox_w, bbox_h) * 0.40),
+        int(long_side * 0.08),
+    )
+
+
+def _blend_feather_px(edge_softness: float) -> int:
+    softness = max(0.5, min(float(edge_softness), 2.0))
+    return max(10, int(round(14 * softness)))
 
 
 def _ai_edge_polish(
@@ -299,7 +315,7 @@ def _ai_edge_polish(
         cv_fill = inpaint_patch_opencv(original, mask)
         edge_w = np.clip(1.0 - np.abs(blend - 0.5) * 2.0, 0.0, 1.0)
         edge_w = (edge_w ** 1.5)[:, :, None]
-        mixed = (patch.astype(np.float32) * (1.0 - edge_w * 0.35) + cv_fill.astype(np.float32) * (edge_w * 0.35))
+        mixed = (patch.astype(np.float32) * (1.0 - edge_w * 0.42) + cv_fill.astype(np.float32) * (edge_w * 0.42))
         return np.clip(mixed, 0, 255).astype(np.uint8)
     except Exception:
         return patch
@@ -320,7 +336,12 @@ def inpaint_objects(
         return image.convert("RGB")
 
     hard_mask = refine_mask_hard(mask, edge_softness=edge_softness)
-    ys, xs = np.where(hard_mask > 127)
+    feather_px = _blend_feather_px(edge_softness)
+    # Expand crop using the blend halo so LaMa sees sky/water/hair context.
+    crop_guide = _build_blend_mask(hard_mask, feather_px)
+    ys, xs = np.where(crop_guide > 0.04)
+    if len(xs) == 0:
+        ys, xs = np.where(hard_mask > 127)
     if len(xs) == 0:
         return image.convert("RGB")
 
@@ -334,7 +355,6 @@ def inpaint_objects(
 
     crop_rgb = rgb[y0:y1, x0:x1].copy()
     crop_hard = hard_mask[y0:y1, x0:x1].copy()
-    feather_px = max(6, int(round(10 * max(0.5, min(edge_softness, 2.0)))))
     use_seamless = mode == "ai"
 
     backend = get_backend(mode)
