@@ -83,7 +83,7 @@ export const UPSCALE_LIMIT_STORAGE_KEY = "photo-enhancer-max-output-mp";
 
 export const defaultOptions: ToolOptions = {
   mode: "balanced",
-  model: "massive",
+  model: "general",
   style: "cinematic",
   bgType: "color",
   bgColor: "#ffffff",

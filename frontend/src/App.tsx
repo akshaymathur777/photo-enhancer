@@ -112,6 +112,18 @@ const MODE_BG_MODEL: Record<AiMode, ToolOptions["model"]> = {
   fast: "lite",
 };
 
+const MODE_DENOISE: Record<AiMode, number> = {
+  best_quality: 12,
+  balanced: 10,
+  fast: 8,
+};
+
+const MODE_SHARPEN: Record<AiMode, number> = {
+  best_quality: 1.8,
+  balanced: 1.5,
+  fast: 1.2,
+};
+
 const MODELS = [
   { id: "massive", label: "Massive", desc: "Best quality" },
   { id: "bria", label: "BRIA RMBG 2.0", desc: "Top-tier edges" },
@@ -356,6 +368,8 @@ export default function App() {
         ...o,
         mode,
         model: MODE_BG_MODEL[mode],
+        denoiseStrength: MODE_DENOISE[mode],
+        sharpenAmount: MODE_SHARPEN[mode],
         scale: maxScale !== null && o.scale > maxScale ? maxScale : o.scale,
       };
     });
