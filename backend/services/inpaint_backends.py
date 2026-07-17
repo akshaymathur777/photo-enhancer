@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Literal
 
 import numpy as np
@@ -12,6 +13,7 @@ RemovalMode = Literal["ai", "quick"]
 _lama_torch_model = None
 _lama_onnx_session = None
 _sd_pipe = None
+_sdxl_pipe = None
 
 # Object-removal prompts: synthesize plausible background, never people.
 _SD_REMOVE_PROMPT = (
@@ -225,6 +227,40 @@ def inpaint_patch_opencv(
     return cv2.inpaint(rgb, hard, radius, flag)
 
 
+def _release_sd_pipe() -> None:
+    """Free SD1.5 weights so SDXL can claim VRAM."""
+    global _sd_pipe
+    if _sd_pipe is None:
+        return
+    try:
+        import torch
+
+        pipe, _device, _use_cuda = _sd_pipe
+        del pipe
+        _sd_pipe = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        _sd_pipe = None
+
+
+def _release_sdxl_pipe() -> None:
+    """Free SDXL weights (e.g. before falling back to SD1.5 on OOM)."""
+    global _sdxl_pipe
+    if _sdxl_pipe is None:
+        return
+    try:
+        import torch
+
+        pipe, _device, _use_cuda = _sdxl_pipe
+        del pipe
+        _sdxl_pipe = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        _sdxl_pipe = None
+
+
 def _get_sd_pipe():
     """Lazy-load Stable Diffusion 1.5 Inpainting (local weights under models/)."""
     global _sd_pipe
@@ -234,6 +270,7 @@ def _get_sd_pipe():
 
         from services.model_download import ensure_sd_inpaint
 
+        _release_sdxl_pipe()
         model_dir = ensure_sd_inpaint()
         use_cuda = torch.cuda.is_available()
         device = torch.device("cuda" if use_cuda else "cpu")
@@ -254,6 +291,59 @@ def _get_sd_pipe():
             pass
         _sd_pipe = (pipe, device, use_cuda)
     return _sd_pipe
+
+
+def _get_sdxl_pipe(model_dir: str | None = None):
+    """Lazy-load SDXL Inpainting — CUDA only (CPU is impractical for XL)."""
+    global _sdxl_pipe
+    if _sdxl_pipe is None or (
+        model_dir is not None and getattr(_sdxl_pipe[0], "_pe_model_dir", None) != str(model_dir)
+    ):
+        import torch
+        from diffusers import StableDiffusionXLInpaintPipeline
+
+        from services.model_download import ensure_sdxl_inpaint, _repair_sdxl_inpaint_snapshot
+
+        if not torch.cuda.is_available():
+            raise InpaintError("SDXL inpaint requires CUDA; falling back")
+
+        if _sdxl_pipe is not None:
+            _release_sdxl_pipe()
+
+        _release_sd_pipe()
+        resolved = Path(model_dir) if model_dir else ensure_sdxl_inpaint()
+        # Some community "inpainting" snapshots ship base-pipeline model_index / unet
+        # in_channels=4 while weights are 9-channel inpaint — patch before load.
+        _repair_sdxl_inpaint_snapshot(resolved)
+        device = torch.device("cuda")
+        dtype = torch.float16
+        try:
+            pipe = StableDiffusionXLInpaintPipeline.from_pretrained(
+                str(resolved),
+                torch_dtype=dtype,
+                variant="fp16",
+                local_files_only=True,
+            )
+        except Exception:
+            pipe = StableDiffusionXLInpaintPipeline.from_pretrained(
+                str(resolved),
+                torch_dtype=dtype,
+                local_files_only=True,
+            )
+        pipe = pipe.to(device)
+        pipe.set_progress_bar_config(disable=True)
+        pipe.enable_attention_slicing()
+        try:
+            pipe.vae.enable_slicing()
+        except Exception:
+            pass
+        try:
+            pipe.vae.enable_tiling()
+        except Exception:
+            pass
+        pipe._pe_model_dir = str(resolved)
+        _sdxl_pipe = (pipe, device, True)
+    return _sdxl_pipe
 
 
 def _detect_waterish_hole(rgb: np.ndarray, hard: np.ndarray) -> bool:
@@ -308,6 +398,52 @@ def _seed_water_context(rgb: np.ndarray, hard: np.ndarray) -> np.ndarray:
         if int(water.sum()) >= 64:
             out[hard] = rgb[water].mean(axis=0)
         return out
+
+
+def _seed_water_texture_stamp(rgb: np.ndarray, hard: np.ndarray) -> np.ndarray:
+    """Fill the hole by stamping real water patches (keeps ripple energy for SDXL)."""
+    import cv2
+
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV).astype(np.float32)
+    h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    water = ((s < 48) & (v > 125) & (v < 235)) | ((h >= 85) & (h <= 135) & (s >= 12) & (v > 95))
+    water = water & (~hard)
+    out = rgb.copy()
+    if int(water.sum()) < 512:
+        return _seed_water_context(rgb, hard)
+
+    ys_w, xs_w = np.where(water)
+    ys_h, xs_h = np.where(hard)
+    # Tile random water neighborhoods into the hole.
+    rng = np.random.default_rng(42)
+    patch = 48
+    hh, ww = rgb.shape[:2]
+    for y, x in zip(ys_h[::max(1, len(ys_h) // 800)], xs_h[::max(1, len(xs_h) // 800)]):
+        yi = int(rng.integers(0, len(ys_w)))
+        cy, cx = int(ys_w[yi]), int(xs_w[yi])
+        y0, y1 = max(0, cy - patch // 2), min(hh, cy + patch // 2)
+        x0, x1 = max(0, cx - patch // 2), min(ww, cx + patch // 2)
+        src = rgb[y0:y1, x0:x1]
+        dy0, dy1 = max(0, y - patch // 2), min(hh, y + patch // 2)
+        dx0, dx1 = max(0, x - patch // 2), min(ww, x + patch // 2)
+        sh, sw = dy1 - dy0, dx1 - dx0
+        if sh < 8 or sw < 8:
+            continue
+        src_r = cv2.resize(src, (sw, sh), interpolation=cv2.INTER_LINEAR)
+        region = hard[dy0:dy1, dx0:dx1]
+        out[dy0:dy1, dx0:dx1][region] = src_r[region]
+
+    # Soft classical pass only to kill hard stamp seams; keep high-freq energy.
+    msk = (hard.astype(np.uint8) * 255)
+    try:
+        soft = cv2.inpaint(out, msk, 3, cv2.INPAINT_TELEA)
+        blend = cv2.GaussianBlur(hard.astype(np.float32), (0, 0), 2.0)[:, :, None]
+        out = (out.astype(np.float32) * (1.0 - 0.35 * blend) + soft.astype(np.float32) * (0.35 * blend)).astype(
+            np.uint8
+        )
+    except Exception:
+        pass
+    return out
 
 
 def inpaint_patch_sd(
@@ -434,8 +570,135 @@ def inpaint_patch_sd(
     return result
 
 
+def inpaint_patch_sdxl(
+    rgb: np.ndarray,
+    mask: np.ndarray,
+    *,
+    max_side: int | None = None,
+    num_steps: int | None = None,
+    model_dir: str | None = None,
+) -> np.ndarray:
+    """Generative inpaint via Stable Diffusion XL Inpainting (CUDA).
+
+    Runs near 1024px on the long side — SDXL's native resolution — then pastes
+    the synthesized hole back into the original-resolution crop.
+    """
+    import cv2
+    import torch
+
+    hard = mask > 127
+    if not hard.any():
+        return rgb.copy()
+
+    pipe, device, use_cuda = _get_sdxl_pipe(model_dir=model_dir)
+    if not use_cuda:
+        raise InpaintError("SDXL inpaint requires CUDA")
+
+    waterish = _detect_waterish_hole(rgb, hard)
+
+    if max_side is None:
+        max_side = 1024
+    if num_steps is None:
+        num_steps = 40
+
+    # Grow the hole so hair fringes / silhouette edges get regenerated.
+    grow_k = 21 if waterish else 17
+    grow_iters = 2 if waterish else 1
+    k_grow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (grow_k, grow_k))
+    hard_grown = cv2.dilate(hard.astype(np.uint8), k_grow, iterations=grow_iters) > 0
+
+    # Water: stamp real ripple patches (not soft TELEA) so SDXL has energy to refine.
+    src_rgb = _seed_water_texture_stamp(rgb, hard_grown) if waterish else rgb
+
+    h, w = rgb.shape[:2]
+    scale = min(1.0, float(max_side) / float(max(h, w)))
+    nw = max(8, int(round(w * scale)))
+    nh = max(8, int(round(h * scale)))
+    # SDXL prefers multiples of 8; keep aspect, pad later if needed via resize.
+    nw = _ceil_modulo(nw, 8)
+    nh = _ceil_modulo(nh, 8)
+
+    if nw != w or nh != h:
+        img_small = cv2.resize(src_rgb, (nw, nh), interpolation=cv2.INTER_AREA)
+        msk_small = cv2.resize(
+            (hard_grown.astype(np.uint8) * 255),
+            (nw, nh),
+            interpolation=cv2.INTER_NEAREST,
+        )
+    else:
+        img_small = src_rgb
+        msk_small = (hard_grown.astype(np.uint8) * 255)
+
+    msk_small = ((msk_small > 127).astype(np.uint8)) * 255
+
+    pil_img = Image.fromarray(img_small)
+    pil_msk = Image.fromarray(msk_small)
+
+    prompt = _SD_WATER_PROMPT if waterish else _SD_REMOVE_PROMPT
+    negative = _SD_WATER_NEGATIVE if waterish else _SD_REMOVE_NEGATIVE
+    # Official SDXL inpaint card: strength < 1.0. High strength so stamped ripples
+    # get re-harmonized without keeping a soft person-shaped TELEA plaque.
+    strength = 0.97 if waterish else 0.99
+    # Slightly lower CFG preserves surrounding water color/ripple better.
+    guidance = 6.5 if waterish else 7.5
+
+    def _run_once(seed: int):
+        generator = torch.Generator(device=device).manual_seed(int(seed))
+        kwargs = dict(
+            prompt=prompt,
+            negative_prompt=negative,
+            image=pil_img,
+            mask_image=pil_msk,
+            height=nh,
+            width=nw,
+            num_inference_steps=int(num_steps),
+            guidance_scale=float(guidance),
+            strength=float(strength),
+            generator=generator,
+        )
+        try:
+            return pipe(**kwargs).images[0]
+        except TypeError:
+            kwargs.pop("height", None)
+            kwargs.pop("width", None)
+            return pipe(**kwargs).images[0]
+
+    with torch.inference_mode():
+        seeds = (42, 77, 113) if waterish else (42,)
+        best_gen = None
+        best_score = -1.0
+        for seed in seeds:
+            candidate = np.array(_run_once(seed).convert("RGB"))
+            if candidate.shape[0] != h or candidate.shape[1] != w:
+                candidate = cv2.resize(candidate, (w, h), interpolation=cv2.INTER_LANCZOS4)
+            g = cv2.cvtColor(candidate, cv2.COLOR_RGB2GRAY).astype(np.float32)
+            tex = float(np.abs(g[hard_grown] - cv2.GaussianBlur(g, (0, 0), 2.0)[hard_grown]).mean())
+            mean_l = float(g[hard_grown].mean())
+            wash_pen = max(0.0, mean_l - 210.0) * 0.08
+            # Prefer fills whose mean luminance is near the ring (avoids milky plaques).
+            ring = cv2.dilate(hard_grown.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))) > 0
+            ring = ring & (~hard_grown)
+            if int(ring.sum()) >= 64:
+                ring_l = float(g[ring].mean())
+                wash_pen += abs(mean_l - ring_l) * 0.05
+            score = tex - wash_pen
+            if score > best_score:
+                best_score = score
+                best_gen = candidate
+        gen = best_gen
+
+    result = rgb.copy()
+    result[hard_grown] = gen[hard_grown]
+
+    region = result[hard]
+    if region.size and region.mean() > 252 and region.std() < 3:
+        raise InpaintError("SDXL inpaint produced blank white fill in masked region")
+    return result
+
+
 class InpaintBackend(ABC):
     is_generative: bool = False
+    engine: str = "classical"
 
     @abstractmethod
     def inpaint_crop(self, rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -443,12 +706,24 @@ class InpaintBackend(ABC):
 
 
 class GenerativeRemoveBackend(InpaintBackend):
-    """Stable Diffusion 1.5 Inpainting — Best Quality / AI Remove path."""
+    """SDXL (CUDA) or SD1.5 Inpainting — Best Quality / AI Remove path."""
 
     is_generative = True
+    engine = "sdxl"
 
     def inpaint_crop(self, rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
         try:
+            import torch
+
+            if torch.cuda.is_available():
+                self.engine = "sdxl"
+                return inpaint_patch_sdxl(rgb, mask)
+        except InpaintError:
+            pass
+        except Exception:
+            pass
+        try:
+            self.engine = "sd15"
             return inpaint_patch_sd(rgb, mask)
         except InpaintError:
             raise
@@ -457,18 +732,37 @@ class GenerativeRemoveBackend(InpaintBackend):
 
 
 class AiRemoveBackend(InpaintBackend):
-    """Generative SD1.5 inpaint with LaMa torch fallback."""
+    """SDXL generative inpaint (CUDA) with SD1.5 then LaMa torch fallback."""
 
     is_generative = True
+    engine = "sdxl"
 
     def inpaint_crop(self, rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        gen_exc: Exception | None = None
         try:
+            import torch
+
+            if torch.cuda.is_available():
+                self.engine = "sdxl"
+                return inpaint_patch_sdxl(rgb, mask)
+        except Exception as exc:
+            gen_exc = exc
+            try:
+                _release_sdxl_pipe()
+            except Exception:
+                pass
+
+        try:
+            self.engine = "sd15"
             return inpaint_patch_sd(rgb, mask)
-        except Exception as gen_exc:
+        except Exception as sd15_exc:
+            if gen_exc is None:
+                gen_exc = sd15_exc
             try:
                 out = inpaint_patch_torch(rgb, mask)
                 # Mark that we fell back so callers can apply LaMa-oriented postprocess.
                 self.is_generative = False
+                self.engine = "lama"
                 return out
             except InpaintError:
                 raise

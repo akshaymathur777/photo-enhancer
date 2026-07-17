@@ -1328,13 +1328,20 @@ def _inpaint_once(
     generative = bool(getattr(backend, "is_generative", False))
 
     if mode == "ai":
-        # Generative SD at 512px often leaves soft water plaques — rescue with real ripples.
+        # Generative SD can leave soft water plaques — rescue with real ripples.
         # Classical LaMa still uses the full hybrid/water-primary path.
+        # SDXL: keep generative fill; only lightly inject texture (heavy classical mix
+        # reintroduces the person-shaped water plaque the XL model was meant to beat).
         if generative:
             if water_bg:
-                inpainted_crop = _rescue_soft_generative_water(
-                    crop_rgb, inpainted_crop, crop_hard
-                )
+                engine = getattr(backend, "engine", "")
+                if engine == "sdxl":
+                    inpainted_crop = _inject_context_texture(crop_rgb, inpainted_crop, crop_hard)
+                    inpainted_crop = _match_fill_to_context(crop_rgb, inpainted_crop, crop_hard)
+                else:
+                    inpainted_crop = _rescue_soft_generative_water(
+                        crop_rgb, inpainted_crop, crop_hard
+                    )
             else:
                 inpainted_crop = _match_fill_to_context(crop_rgb, inpainted_crop, crop_hard)
         else:
@@ -1401,7 +1408,7 @@ def inpaint_objects(
     mode: RemovalMode = "ai",
     edge_softness: float = 1.0,
 ) -> Image.Image:
-    """Remove masked regions using AI Remove (SD2 generative) or Quick Remove (ONNX LaMa)."""
+    """Remove masked regions using AI Remove (SDXL/SD1.5 generative) or Quick Remove (ONNX LaMa)."""
     rgb = _pil_to_rgb_array(image)
 
     msk = np.array(mask.convert("L"))
@@ -1432,7 +1439,12 @@ def inpaint_objects(
         if water_bg:
             residual = _soft_plaque_residual_mask(rgb, result, hard_mask, protect=protect)
             if residual is not None:
-                rescued = _rescue_soft_generative_water(rgb, result, residual)
+                # Light texture inject first. Heavy classical water-primary often paints a
+                # person-shaped plaque over an otherwise usable SDXL fill.
+                rescued = _inject_context_texture(rgb, result, residual)
+                rescued = _match_fill_to_context(rgb, rescued, residual)
+                if _is_soft_water_plaque(rgb, rescued, residual):
+                    rescued = _rescue_soft_generative_water(rgb, result, residual)
                 hard_r = residual > 127
                 if protect is not None and protect.any():
                     hard_r = hard_r & (~protect)

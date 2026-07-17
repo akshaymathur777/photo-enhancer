@@ -71,6 +71,14 @@ def _sd_inpaint_dir() -> Path:
     return _models_dir() / "sd15-inpainting"
 
 
+def _sdxl_inpaint_dir() -> Path:
+    return _models_dir() / "sdxl-inpainting"
+
+
+def _sdxl_juggernaut_dir() -> Path:
+    return _models_dir() / "sdxl-inpainting-juggernaut"
+
+
 def _realesrgan_pth() -> Path:
     return _models_dir() / "RealESRGAN_x4plus.pth"
 
@@ -84,10 +92,62 @@ REALESRGAN_URL = (
 )
 # Public ungated SD1.5 inpaint (Stability SD2 requires HF auth / license accept).
 SD_INPAINT_REPO = "stable-diffusion-v1-5/stable-diffusion-inpainting"
+# Official Diffusers SDXL inpaint (ungated). Photoreal Juggernaut-X preferred when present.
+SDXL_INPAINT_REPO = "diffusers/stable-diffusion-xl-1.0-inpainting-0.1"
+SDXL_JUGGERNAUT_REPO = "GraydientPlatformAPI/juggernaut-x-inpainting-sdxl"
 
 
 def _sd_inpaint_present() -> bool:
     return (_sd_inpaint_dir() / "model_index.json").is_file()
+
+
+def _sdxl_inpaint_present() -> bool:
+    return (_sdxl_inpaint_dir() / "model_index.json").is_file() or (
+        _sdxl_juggernaut_dir() / "model_index.json"
+    ).is_file()
+
+
+def resolve_sdxl_inpaint_dir() -> Path:
+    """Prefer photoreal Juggernaut-X inpaint when downloaded; else official SDXL."""
+    jug = _sdxl_juggernaut_dir()
+    if (jug / "model_index.json").is_file():
+        return jug
+    return _sdxl_inpaint_dir()
+
+
+def _repair_sdxl_inpaint_snapshot(model_dir: Path) -> None:
+    """Fix mislabeled community SDXL-inpaint snapshots (base class / 4-ch UNet config)."""
+    import json
+
+    index_path = model_dir / "model_index.json"
+    unet_cfg_path = model_dir / "unet" / "config.json"
+    try:
+        if index_path.is_file():
+            data = json.loads(index_path.read_text(encoding="utf-8"))
+            if data.get("_class_name") == "StableDiffusionXLPipeline":
+                data["_class_name"] = "StableDiffusionXLInpaintPipeline"
+                index_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        if unet_cfg_path.is_file():
+            cfg = json.loads(unet_cfg_path.read_text(encoding="utf-8"))
+            if int(cfg.get("in_channels", 4)) != 4:
+                return
+            weight = model_dir / "unet" / "diffusion_pytorch_model.safetensors"
+            weight_fp16 = model_dir / "unet" / "diffusion_pytorch_model.fp16.safetensors"
+            wpath = weight if weight.is_file() else weight_fp16
+            if not wpath.is_file():
+                return
+            try:
+                from safetensors import safe_open
+
+                with safe_open(str(wpath), framework="pt", device="cpu") as f:
+                    shape = f.get_tensor("conv_in.weight").shape
+                if len(shape) >= 2 and int(shape[1]) == 9:
+                    cfg["in_channels"] = 9
+                    unet_cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 # rembg session ids used by image_processing.BG_MODELS (+ bria)
 REMBG_MODEL_IDS = [
@@ -329,10 +389,18 @@ def _build_registry() -> list[ModelEntry]:
             ),
         ),
         ModelEntry(
+            id="sdxl_inpaint",
+            name="SDXL Inpaint (AI Remove / Best Quality)",
+            size_estimate_mb=7000,
+            feature="Object removal (generative AI, CUDA)",
+            present_fn=_sdxl_inpaint_present,
+            download_fn=lambda: _download_sdxl_inpaint(),
+        ),
+        ModelEntry(
             id="sd_inpaint",
-            name="SD1.5 Inpaint (AI Remove / Best Quality)",
+            name="SD1.5 Inpaint (AI Remove fallback)",
             size_estimate_mb=4200,
-            feature="Object removal (generative AI)",
+            feature="Object removal (generative fallback)",
             present_fn=_sd_inpaint_present,
             download_fn=lambda: _download_sd_inpaint(),
         ),
@@ -714,12 +782,12 @@ def _download_sd_inpaint() -> None:
     _update_model_status("sd_inpaint", "downloading")
     _set_progress(
         current_model_id="sd_inpaint",
-        current_model_name="SD1.5 Inpaint (AI Remove / Best Quality)",
+        current_model_name="SD1.5 Inpaint (AI Remove fallback)",
         bytes_downloaded=0,
         bytes_total=0,
         percent=0.0,
         message=(
-            "Downloading SD1.5 Inpaint (~4 GB). GPU strongly recommended; CPU works but is slow."
+            "Downloading SD1.5 Inpaint (~4 GB). Used when SDXL is unavailable; CPU works but is slow."
         ),
     )
     _log(logging.INFO, f"Starting HuggingFace snapshot: {SD_INPAINT_REPO} -> {dest}")
@@ -755,16 +823,115 @@ def _download_sd_inpaint() -> None:
 
 
 def ensure_sd_inpaint() -> Path:
-    """Stable Diffusion 1.5 Inpainting (~4 GB) for generative AI Remove / Best Quality."""
+    """Stable Diffusion 1.5 Inpainting (~4 GB) — generative fallback when SDXL is unavailable."""
     _models_dir().mkdir(parents=True, exist_ok=True)
     dest = _sd_inpaint_dir()
     if not _sd_inpaint_present():
         _track_on_demand(
             "sd_inpaint",
-            "SD1.5 Inpaint (AI Remove / Best Quality)",
+            "SD1.5 Inpaint (AI Remove fallback)",
             _download_sd_inpaint,
         )
     return dest
+
+
+def _download_sdxl_inpaint() -> None:
+    """Download SDXL Inpainting weights. Prefer photoreal Juggernaut-X; else official Diffusers."""
+    from huggingface_hub import snapshot_download
+
+    # Prefer Juggernaut when downloading fresh — stronger photoreal coastal fills.
+    dest = _sdxl_juggernaut_dir()
+    repo = SDXL_JUGGERNAUT_REPO
+    label = "SDXL Juggernaut Inpaint (AI Remove / Best Quality)"
+    dest.mkdir(parents=True, exist_ok=True)
+    _update_model_status("sdxl_inpaint", "downloading")
+    _set_progress(
+        current_model_id="sdxl_inpaint",
+        current_model_name=label,
+        bytes_downloaded=0,
+        bytes_total=0,
+        percent=0.0,
+        message=(
+            "Downloading SDXL Inpaint (~7 GB, photoreal). NVIDIA CUDA required for Best Quality; "
+            "falls back to SD1.5 / LaMa if unavailable."
+        ),
+    )
+    _log(logging.INFO, f"Starting HuggingFace snapshot: {repo} -> {dest}")
+
+    last_exc: BaseException | None = None
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        try:
+            snapshot_download(
+                repo_id=repo,
+                local_dir=str(dest),
+                token=False,
+                ignore_patterns=["*.bin", "*.onnx", "*.msgpack", "*.h5", "*.ot"],
+            )
+            if (dest / "model_index.json").is_file():
+                _repair_sdxl_inpaint_snapshot(dest)
+                _update_model_status("sdxl_inpaint", "present")
+                _set_progress(percent=100.0, message="SDXL Inpaint downloaded.")
+                _log(logging.INFO, f"Completed SDXL Inpaint download at {dest}")
+                return
+            raise RuntimeError(f"SDXL download finished but model_index.json is missing under {dest}")
+        except Exception as exc:
+            last_exc = exc
+            _log(
+                logging.WARNING,
+                f"SDXL Juggernaut download attempt {attempt}/{DOWNLOAD_RETRIES} failed: {exc}",
+                exc=exc,
+            )
+            if attempt < DOWNLOAD_RETRIES:
+                time.sleep(DOWNLOAD_BACKOFF_SEC * attempt)
+
+    # Fallback: official Diffusers SDXL inpaint.
+    dest = _sdxl_inpaint_dir()
+    dest.mkdir(parents=True, exist_ok=True)
+    _set_progress(
+        message=(
+            "Juggernaut unavailable — downloading official SDXL Inpaint (~7 GB)…"
+        ),
+    )
+    _log(logging.INFO, f"Falling back to HuggingFace snapshot: {SDXL_INPAINT_REPO} -> {dest}")
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        try:
+            snapshot_download(
+                repo_id=SDXL_INPAINT_REPO,
+                local_dir=str(dest),
+                token=False,
+                ignore_patterns=["*.bin", "*.onnx", "*.msgpack", "*.h5", "*.ot"],
+            )
+            if not (dest / "model_index.json").is_file():
+                raise RuntimeError(
+                    f"SDXL Inpaint download finished but model_index.json is missing under {dest}"
+                )
+            _update_model_status("sdxl_inpaint", "present")
+            _set_progress(percent=100.0, message="SDXL Inpaint downloaded.")
+            _log(logging.INFO, f"Completed official SDXL Inpaint download at {dest}")
+            return
+        except Exception as exc:
+            last_exc = exc
+            _log(
+                logging.WARNING,
+                f"Official SDXL Inpaint download attempt {attempt}/{DOWNLOAD_RETRIES} failed: {exc}",
+                exc=exc,
+            )
+            if attempt < DOWNLOAD_RETRIES:
+                time.sleep(DOWNLOAD_BACKOFF_SEC * attempt)
+    assert last_exc is not None
+    raise last_exc
+
+
+def ensure_sdxl_inpaint() -> Path:
+    """SDXL Inpainting (~7 GB) for generative AI Remove / Best Quality on CUDA."""
+    _models_dir().mkdir(parents=True, exist_ok=True)
+    if not _sdxl_inpaint_present():
+        _track_on_demand(
+            "sdxl_inpaint",
+            "SDXL Inpaint (AI Remove / Best Quality)",
+            _download_sdxl_inpaint,
+        )
+    return resolve_sdxl_inpaint_dir()
 
 
 def ensure_realesrgan_model() -> Path:
