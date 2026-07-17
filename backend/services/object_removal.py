@@ -244,7 +244,7 @@ def auto_detect_people_mask(image: Image.Image, conf: float = 0.35) -> Image.Ima
 
 def refine_mask_hard(
     mask: Image.Image,
-    dilate_px: int = 24,
+    dilate_px: int = 18,
     edge_softness: float = 1.0,
     rgb: np.ndarray | None = None,
 ) -> np.ndarray:
@@ -372,7 +372,12 @@ def _expand_mask_subject_halo(
         # Hair against bright water: dark fringe just outside the mask.
         bg_lum = float(bg_mean.mean())
         lum = pix.mean(axis=2)
-        dark_hair = band & (lum < bg_lum - 18.0) & (lum < float(dark_mean.mean()) + 12.0)
+        dark_hair = (
+            band
+            & (lum < bg_lum - 22.0)
+            & (lum < float(dark_mean.mean()) + 8.0)
+            & (d_best + 2.0 < d_bg)
+        )
         expand = expand | dark_hair
 
     out = hard | expand
@@ -383,7 +388,7 @@ def _expand_mask_subject_halo(
 
 def refine_mask(
     mask: Image.Image,
-    dilate_px: int = 24,
+    dilate_px: int = 18,
     feather_px: int = 10,
     edge_softness: float = 1.0,
 ) -> Image.Image:
@@ -521,7 +526,7 @@ def _inject_context_texture(
     inpainted: np.ndarray,
     mask: np.ndarray,
 ) -> np.ndarray:
-    """Kill flat silhouette plaques by stamping neighboring water/sky texture into the hole."""
+    """Add real water/sky ripple energy into flat LaMa fills."""
     import cv2
 
     hard = mask > 127
@@ -533,139 +538,57 @@ def _inject_context_texture(
     if int(ring.sum()) < 64:
         return inpainted
 
-    gray_ring = cv2.cvtColor(original, cv2.COLOR_RGB2GRAY)
-    ring_edge_density = float(cv2.Canny(gray_ring, 40, 120)[ring].mean())
+    gray = cv2.cvtColor(original, cv2.COLOR_RGB2GRAY)
+    ring_edge_density = float(cv2.Canny(gray, 40, 120)[ring].mean())
     if ring_edge_density < 8.0:
         return inpainted
 
-    stamped = _stamp_context_texture(original, hard)
-    if stamped is None:
-        try:
-            telea = inpaint_patch_opencv(original, mask)
-        except Exception:
-            return inpainted
-        stamped = telea
-
     fill = inpainted.astype(np.float32)
-    stamp = stamped.astype(np.float32)
-    # Strong graft: keep a hint of LaMa/base structure, mostly stamped ripples.
-    mix = 0.94 if ring_edge_density > 14.0 else 0.60
-    sigma = 2.2
-    blur_fill = cv2.GaussianBlur(fill, (0, 0), sigmaX=sigma)
-    blur_stamp = cv2.GaussianBlur(stamp, (0, 0), sigmaX=sigma)
-    textured = blur_fill * (1.0 - mix) + blur_stamp * mix + (stamp - blur_stamp)
+    orig_f = original.astype(np.float32)
+    sigma = 2.4
+    blur_o = cv2.GaussianBlur(orig_f, (0, 0), sigmaX=sigma)
+    blur_f = cv2.GaussianBlur(fill, (0, 0), sigmaX=sigma)
+    hf_o = orig_f - blur_o
 
-    out = fill.copy()
-    out[hard] = np.clip(textured[hard], 0, 255)
-    return out.astype(np.uint8)
-
-
-def _stamp_context_texture(original: np.ndarray, hard: np.ndarray) -> np.ndarray | None:
-    """Fill the hole by mirroring same-row water/sky into each masked span.
-
-    Only samples bright background-like pixels so dark hair from neighbors
-    (couple in front) is not mirrored into the hole.
-    """
-    import cv2
-
-    h, w = hard.shape
-    if not hard.any():
-        return None
-
-    ring_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (41, 41))
-    ring = (cv2.dilate(hard.astype(np.uint8), ring_k) > 0) & (~hard)
-    if int(ring.sum()) < 64:
-        return None
-
-    ring_lum = original[ring].astype(np.float32).mean(axis=2)
-    # Water/sky is bright; hair/clothes are darker — keep a margin below ring median.
+    ring_lum = original[ring].astype(np.float32).mean(axis=1)
     water_floor = float(np.percentile(ring_lum, 20)) - 8.0
     lum = original.astype(np.float32).mean(axis=2)
     waterish = (~hard) & (lum >= water_floor)
 
-    out = original.copy()
-    filled_any = False
-    last_good = None
-
+    hf_fill = np.zeros_like(fill)
+    h, _w = hard.shape
     for y in range(h):
-        masked = hard[y]
-        if not masked.any():
-            if waterish[y].any():
-                last_good = original[y].copy()
+        if not hard[y].any():
             continue
+        water_xs = np.where(waterish[y])[0]
+        src_y = y
+        if len(water_xs) < 8:
+            yy = y - 1
+            while yy >= 0 and int(waterish[yy].sum()) < 8:
+                yy -= 1
+            if yy < 0:
+                continue
+            water_xs = np.where(waterish[yy])[0]
+            src_y = yy
+        mask_xs = np.where(hard[y])[0]
+        for i, x in enumerate(mask_xs):
+            src_x = int(water_xs[i % len(water_xs)])
+            hf_fill[y, x] = hf_o[src_y, src_x]
 
-        row = masked.astype(np.uint8)
-        edges = np.diff(row, prepend=0, append=0)
-        starts = np.where(edges == 1)[0]
-        ends = np.where(edges == -1)[0]
-        row_out = out[y].copy()
-        row_filled = False
-        water_row = waterish[y]
+    try:
+        telea = inpaint_patch_opencv(original, mask).astype(np.float32)
+        blur_t = cv2.GaussianBlur(telea, (0, 0), sigmaX=sigma)
+        dist = cv2.distanceTransform((hard.astype(np.uint8)) * 255, cv2.DIST_L2, 5)
+        edge_w = np.clip(1.0 - dist / 18.0, 0.0, 1.0)[:, :, None]
+        hf_combined = hf_fill * (1.0 - edge_w) + (telea - blur_t) * edge_w
+        blur_f = blur_f * 0.80 + blur_t * 0.20
+    except Exception:
+        hf_combined = hf_fill
 
-        for a, b in zip(starts, ends):
-            b -= 1  # inclusive end
-            left_run = 0
-            x = a - 1
-            while x >= 0 and water_row[x] and left_run < 400:
-                left_run += 1
-                x -= 1
-            right_run = 0
-            x = b + 1
-            while x < w and water_row[x] and right_run < 400:
-                right_run += 1
-                x += 1
-
-            for x in range(a, b + 1):
-                dist_l = x - a
-                dist_r = b - x
-                pick = None
-                if left_run > 0:
-                    pick = a - 1 - (dist_l % left_run)
-                if right_run > 0:
-                    cand = b + 1 + (dist_r % right_run)
-                    if pick is None or dist_r < dist_l:
-                        pick = cand
-                if pick is None:
-                    free = np.where(water_row)[0]
-                    if len(free):
-                        pick = int(free[np.argmin(np.abs(free - x))])
-                if pick is not None:
-                    row_out[x] = original[y, pick]
-                    row_filled = True
-
-        if row_filled:
-            out[y] = row_out
-            last_good = row_out
-            filled_any = True
-        elif last_good is not None:
-            out[y, masked] = last_good[masked]
-            filled_any = True
-
-    if not filled_any:
-        return None
-
-    ring_mean = original[ring].astype(np.float32).mean(axis=0)
-    fill_mean = out[hard].astype(np.float32).mean(axis=0)
-    delta = ring_mean - fill_mean
-    if float(np.abs(delta).mean()) > 3.0:
-        adj = out.astype(np.float32)
-        adj[hard] = np.clip(adj[hard] + delta * 0.70, 0, 255)
-        out = adj.astype(np.uint8)
-
-    hard_u8 = hard.astype(np.uint8) * 255
-    dist_in = cv2.distanceTransform(hard_u8, cv2.DIST_L2, 5)
-    band = hard & (dist_in <= 5.0)
-    if band.any():
-        blurred = cv2.GaussianBlur(out, (0, 0), sigmaX=1.8)
-        mix = np.clip(dist_in / 5.0, 0.0, 1.0).astype(np.float32)
-        blended = (
-            blurred.astype(np.float32) * (1.0 - mix[:, :, None])
-            + out.astype(np.float32) * mix[:, :, None]
-        )
-        out = out.copy()
-        out[band] = np.clip(blended[band], 0, 255).astype(np.uint8)
-
-    return out
+    textured = blur_f + hf_combined
+    out = fill.copy()
+    out[hard] = np.clip(textured[hard], 0, 255)
+    return out.astype(np.uint8)
 
 
 def _hybrid_context_fill(
@@ -673,11 +596,7 @@ def _hybrid_context_fill(
     lama: np.ndarray,
     mask: np.ndarray,
 ) -> np.ndarray:
-    """Color-match LaMa and lightly mix TELEA when it tracks context better.
-
-    Aggressive same-row texture stamping was removed — it smeared neighboring
-    faces/hills into horizontal glitch bands on crowded coastal selfies.
-    """
+    """Color-match LaMa, lightly mix TELEA, then inject surrounding ripple HF."""
     import cv2
 
     hard = mask > 127
@@ -689,7 +608,7 @@ def _hybrid_context_fill(
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (41, 41))
     ring = (cv2.dilate(hard.astype(np.uint8), k) > 0) & (~hard)
     if int(ring.sum()) < 64:
-        return matched
+        return _inject_context_texture(original, matched, mask)
 
     ring_mean = original[ring].astype(np.float32).mean(axis=0)
     lama_err = float(np.abs(matched[hard].astype(np.float32).mean(axis=0) - ring_mean).mean())
@@ -697,15 +616,16 @@ def _hybrid_context_fill(
         telea = inpaint_patch_opencv(original, mask)
         telea_err = float(np.abs(telea[hard].astype(np.float32).mean(axis=0) - ring_mean).mean())
     except Exception:
-        return matched
+        return _inject_context_texture(original, matched, mask)
 
-    # Only mix TELEA when it clearly matches surrounding color better (no stamp).
-    if telea_err + 4.0 < lama_err:
+    base = matched
+    if telea_err + 3.0 < lama_err:
         mix = float(np.clip((lama_err - telea_err) / 30.0, 0.25, 0.65))
-        return (
+        base = (
             matched.astype(np.float32) * (1.0 - mix) + telea.astype(np.float32) * mix
         ).astype(np.uint8)
-    return matched
+
+    return _inject_context_texture(original, base, mask)
 
 
 def _crop_padding(bbox_w: int, bbox_h: int, img_h: int, img_w: int) -> int:
