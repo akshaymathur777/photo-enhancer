@@ -227,17 +227,26 @@ def refine_mask(
 
 
 def _build_blend_mask(hard_mask: np.ndarray, feather_px: int) -> np.ndarray:
-    """Signed-distance soft alpha: 1 inside mask, smooth falloff outside."""
+    """Soft alpha that is fully opaque inside the hard mask, with falloff only outside.
+
+    The previous signed-distance ramp put ~half the feather *inside* the selection,
+    so original pixels (ghost silhouettes) bled back through the composite. For
+    object removal the interior must stay at 1.0; soften only the outer halo.
+    """
     import cv2
 
     binary = (hard_mask > 127).astype(np.uint8)
-    dist_in = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+    ramp = max(int(feather_px), 2)
     dist_out = cv2.distanceTransform(1 - binary, cv2.DIST_L2, 5)
-    signed = dist_in - dist_out
-    ramp = max(feather_px, 2)
-    blend = np.clip((signed + ramp) / (2.0 * ramp), 0.0, 1.0)
+    blend = np.where(
+        binary > 0,
+        1.0,
+        np.clip(1.0 - dist_out / float(ramp), 0.0, 1.0),
+    ).astype(np.float32)
     k = ramp if ramp % 2 == 1 else ramp + 1
-    blend = cv2.GaussianBlur(blend.astype(np.float32), (k, k), sigmaX=ramp * 0.15)
+    blend = cv2.GaussianBlur(blend, (k, k), sigmaX=max(ramp * 0.20, 1.0))
+    # Blur softens the outer edge; never let it pull the hard interior below 1.0.
+    blend = np.maximum(blend, binary.astype(np.float32))
     return np.clip(blend, 0.0, 1.0)
 
 
@@ -267,7 +276,12 @@ def _try_seamless_blend(
     inpainted: np.ndarray,
     mask: np.ndarray,
 ) -> np.ndarray | None:
-    """Poisson seamless clone when mask is large enough; None on failure."""
+    """Poisson seamless clone when it does not ghost the original back in.
+
+    NORMAL/MIXED clone often washes LaMa fills toward the pre-removal colors
+    (ghost silhouettes). Reject any clone that moves the fill closer to the
+    original than raw LaMa already is.
+    """
     import cv2
 
     hard = (mask > 127).astype(np.uint8) * 255
@@ -281,21 +295,109 @@ def _try_seamless_blend(
     if hard[cy, cx] == 0:
         cx, cy = int(xs[len(xs) // 2]), int(ys[len(ys) // 2])
 
+    cloned = None
     try:
-        return cv2.seamlessClone(inpainted, original, hard, (cx, cy), cv2.NORMAL_CLONE)
+        cloned = cv2.seamlessClone(inpainted, original, hard, (cx, cy), cv2.NORMAL_CLONE)
     except cv2.error:
         try:
-            return cv2.seamlessClone(inpainted, original, hard, (cx, cy), cv2.MIXED_CLONE)
+            cloned = cv2.seamlessClone(inpainted, original, hard, (cx, cy), cv2.MIXED_CLONE)
         except cv2.error:
             return None
 
+    core = hard > 0
+    lama_delta = float(
+        np.abs(inpainted[core].astype(np.float32) - original[core].astype(np.float32)).mean()
+    )
+    clone_delta = float(
+        np.abs(cloned[core].astype(np.float32) - original[core].astype(np.float32)).mean()
+    )
+    # Keep clone only when it preserves most of the fill departure from original.
+    if lama_delta < 1.0 or clone_delta < lama_delta * 0.72:
+        return None
+    return cloned
+
+
+def _match_fill_to_context(
+    original: np.ndarray,
+    inpainted: np.ndarray,
+    mask: np.ndarray,
+) -> np.ndarray:
+    """Nudge washed LaMa fills toward surrounding mean color (coastal water/sky)."""
+    import cv2
+
+    hard = mask > 127
+    if not hard.any():
+        return inpainted
+
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
+    ring = (cv2.dilate(hard.astype(np.uint8), k) > 0) & (~hard)
+    if int(ring.sum()) < 64:
+        return inpainted
+
+    ring_mean = original[ring].astype(np.float32).mean(axis=0)
+    fill_mean = inpainted[hard].astype(np.float32).mean(axis=0)
+    delta = ring_mean - fill_mean
+    drift = float(np.abs(delta).mean())
+    if drift < 10.0:
+        return inpainted
+
+    # Stronger correction when LaMa drifts far (bright grey blobs on water).
+    strength = float(np.clip(drift / 45.0, 0.30, 0.70))
+    out = inpainted.astype(np.float32)
+    out[hard] = np.clip(out[hard] + delta * strength, 0, 255)
+    return out.astype(np.uint8)
+
+
+def _hybrid_context_fill(
+    original: np.ndarray,
+    lama: np.ndarray,
+    mask: np.ndarray,
+) -> np.ndarray:
+    """Blend LaMa with TELEA when TELEA better matches local context color."""
+    import cv2
+
+    hard = mask > 127
+    if not hard.any():
+        return lama
+
+    try:
+        telea = inpaint_patch_opencv(original, mask)
+    except Exception:
+        return _match_fill_to_context(original, lama, mask)
+
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
+    ring = (cv2.dilate(hard.astype(np.uint8), k) > 0) & (~hard)
+    if int(ring.sum()) < 64:
+        return _match_fill_to_context(original, lama, mask)
+
+    ring_mean = original[ring].astype(np.float32).mean(axis=0)
+    lama_err = float(np.abs(lama[hard].astype(np.float32).mean(axis=0) - ring_mean).mean())
+    telea_err = float(np.abs(telea[hard].astype(np.float32).mean(axis=0) - ring_mean).mean())
+
+    if telea_err + 4.0 >= lama_err:
+        return _match_fill_to_context(original, lama, mask)
+
+    # TELEA closer to context — mix it in, then color-match.
+    mix = float(np.clip((lama_err - telea_err) / 40.0, 0.20, 0.55))
+    blended = (
+        lama.astype(np.float32) * (1.0 - mix) + telea.astype(np.float32) * mix
+    ).astype(np.uint8)
+    return _match_fill_to_context(original, blended, mask)
+
 
 def _crop_padding(bbox_w: int, bbox_h: int, img_h: int, img_w: int) -> int:
+    """Context around the mask — enough for sky/water, but not a full-frame crop.
+
+    Tall person masks previously used max(bbox)*0.40 which often expanded to the
+    whole image and hurt LaMa fill quality on coastal backgrounds.
+    """
     long_side = max(img_h, img_w)
+    short_side = min(bbox_w, bbox_h)
     return max(
-        128,
-        int(max(bbox_w, bbox_h) * 0.40),
-        int(long_side * 0.08),
+        96,
+        int(short_side * 0.55),
+        int(max(bbox_w, bbox_h) * 0.18),
+        int(long_side * 0.05),
     )
 
 
@@ -370,6 +472,9 @@ def inpaint_objects(
                 raise
         else:
             raise
+
+    if mode == "ai":
+        inpainted_crop = _hybrid_context_fill(crop_rgb, inpainted_crop, crop_hard)
 
     seamless = _try_seamless_blend(crop_rgb, inpainted_crop, crop_hard) if use_seamless else None
     base_patch = seamless if seamless is not None else inpainted_crop
