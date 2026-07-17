@@ -101,7 +101,7 @@ const CATEGORIES: { id: CategoryId; label: string; tools: ToolDef[] }[] = [
 ];
 
 const MODES: { id: AiMode; label: string; desc: string }[] = [
-  { id: "best_quality", label: "Best Quality", desc: "Heaviest models, best results" },
+  { id: "best_quality", label: "Best Quality", desc: "Generative SD remove; GPU recommended" },
   { id: "balanced", label: "Balanced", desc: "Default speed/quality" },
   { id: "fast", label: "Fast", desc: "Lite models, quicker" },
 ];

@@ -449,7 +449,12 @@ export function ObjectRemovalEditor({
 
       {inpaintMode === "quick" && (
         <p className="text-xs text-amber-400/90 bg-amber-950/30 border border-amber-700/30 rounded-lg px-3 py-2">
-          Quick mode uses a fast 512px preview model — lower quality than AI Remove. Switch to AI Remove for best results.
+          Quick mode uses fast LaMa (512px) — lower quality. Switch to AI Remove for generative Best Quality fill.
+        </p>
+      )}
+      {inpaintMode === "ai" && (
+        <p className="text-xs text-purple-300/90 bg-purple-950/30 border border-purple-700/30 rounded-lg px-3 py-2">
+          AI Remove downloads Stable Diffusion 1.5 Inpaint (~4 GB) on first use. GPU strongly recommended; CPU works but can take several minutes per removal.
         </p>
       )}
 

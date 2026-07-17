@@ -67,6 +67,10 @@ def _lama_big_torch() -> Path:
     return _models_dir() / "big-lama.pt"
 
 
+def _sd_inpaint_dir() -> Path:
+    return _models_dir() / "sd15-inpainting"
+
+
 def _realesrgan_pth() -> Path:
     return _models_dir() / "RealESRGAN_x4plus.pth"
 
@@ -78,6 +82,12 @@ LAMA_BIG_TORCH_URL = (
 REALESRGAN_URL = (
     "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
 )
+# Public ungated SD1.5 inpaint (Stability SD2 requires HF auth / license accept).
+SD_INPAINT_REPO = "stable-diffusion-v1-5/stable-diffusion-inpainting"
+
+
+def _sd_inpaint_present() -> bool:
+    return (_sd_inpaint_dir() / "model_index.json").is_file()
 
 # rembg session ids used by image_processing.BG_MODELS (+ bria)
 REMBG_MODEL_IDS = [
@@ -310,13 +320,21 @@ def _build_registry() -> list[ModelEntry]:
         ),
         ModelEntry(
             id="lama_big",
-            name="LaMa big (AI Remove)",
+            name="LaMa big (AI Remove fallback)",
             size_estimate_mb=196,
-            feature="Object removal (AI)",
+            feature="Object removal (fallback)",
             present_fn=lambda: _lama_big_torch().is_file(),
             download_fn=lambda: _download_direct(
-                LAMA_BIG_TORCH_URL, _lama_big_torch(), "LaMa big (AI Remove)", "lama_big"
+                LAMA_BIG_TORCH_URL, _lama_big_torch(), "LaMa big (AI Remove fallback)", "lama_big"
             ),
+        ),
+        ModelEntry(
+            id="sd_inpaint",
+            name="SD1.5 Inpaint (AI Remove / Best Quality)",
+            size_estimate_mb=4200,
+            feature="Object removal (generative AI)",
+            present_fn=_sd_inpaint_present,
+            download_fn=lambda: _download_sd_inpaint(),
         ),
         ModelEntry(
             id="realesrgan",
@@ -673,16 +691,80 @@ def ensure_lama_model() -> Path:
 
 
 def ensure_lama_big_torch() -> Path:
-    """PyTorch JIT big-LaMa (~200 MB) for AI Remove mode."""
+    """PyTorch JIT big-LaMa (~200 MB) — Fast/fallback when generative inpaint fails."""
     _models_dir().mkdir(parents=True, exist_ok=True)
     path = _lama_big_torch()
     if not path.exists():
         _track_on_demand(
             "lama_big",
-            "LaMa big (AI Remove)",
-            lambda: _download_direct(LAMA_BIG_TORCH_URL, path, "LaMa big (AI Remove)", "lama_big"),
+            "LaMa big (AI Remove fallback)",
+            lambda: _download_direct(
+                LAMA_BIG_TORCH_URL, path, "LaMa big (AI Remove fallback)", "lama_big"
+            ),
         )
     return path
+
+
+def _download_sd_inpaint() -> None:
+    """Download Stable Diffusion 1.5 Inpainting weights (~4 GB) into the models folder."""
+    from huggingface_hub import snapshot_download
+
+    dest = _sd_inpaint_dir()
+    dest.mkdir(parents=True, exist_ok=True)
+    _update_model_status("sd_inpaint", "downloading")
+    _set_progress(
+        current_model_id="sd_inpaint",
+        current_model_name="SD1.5 Inpaint (AI Remove / Best Quality)",
+        bytes_downloaded=0,
+        bytes_total=0,
+        percent=0.0,
+        message=(
+            "Downloading SD1.5 Inpaint (~4 GB). GPU strongly recommended; CPU works but is slow."
+        ),
+    )
+    _log(logging.INFO, f"Starting HuggingFace snapshot: {SD_INPAINT_REPO} -> {dest}")
+
+    last_exc: BaseException | None = None
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        try:
+            # token=False avoids broken/expired local HF oauth tokens causing 401s.
+            snapshot_download(
+                repo_id=SD_INPAINT_REPO,
+                local_dir=str(dest),
+                token=False,
+            )
+            if not _sd_inpaint_present():
+                raise RuntimeError(
+                    f"SD1.5 Inpaint download finished but model_index.json is missing under {dest}"
+                )
+            _update_model_status("sd_inpaint", "present")
+            _set_progress(percent=100.0, message="SD1.5 Inpaint downloaded.")
+            _log(logging.INFO, f"Completed SD1.5 Inpaint download at {dest}")
+            return
+        except Exception as exc:
+            last_exc = exc
+            _log(
+                logging.WARNING,
+                f"SD1.5 Inpaint download attempt {attempt}/{DOWNLOAD_RETRIES} failed: {exc}",
+                exc=exc,
+            )
+            if attempt < DOWNLOAD_RETRIES:
+                time.sleep(DOWNLOAD_BACKOFF_SEC * attempt)
+    assert last_exc is not None
+    raise last_exc
+
+
+def ensure_sd_inpaint() -> Path:
+    """Stable Diffusion 1.5 Inpainting (~4 GB) for generative AI Remove / Best Quality."""
+    _models_dir().mkdir(parents=True, exist_ok=True)
+    dest = _sd_inpaint_dir()
+    if not _sd_inpaint_present():
+        _track_on_demand(
+            "sd_inpaint",
+            "SD1.5 Inpaint (AI Remove / Best Quality)",
+            _download_sd_inpaint,
+        )
+    return dest
 
 
 def ensure_realesrgan_model() -> Path:

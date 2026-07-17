@@ -1123,14 +1123,20 @@ def _inpaint_once(
     crop_rgb = rgb[y0:y1, x0:x1].copy()
     crop_hard = hard_mask[y0:y1, x0:x1].copy()
     crop_protect = protect[y0:y1, x0:x1] if protect is not None else None
-    # Scrub bystanders only for the *inpaint engine* — never for the final composite
-    # source, or feathered edges pull destroyed faces into the result.
-    crop_for_inpaint = _scrub_other_people(crop_rgb, crop_hard)
+    backend = get_backend(mode)
+    # LaMa samples neighboring pixels — scrub bystanders so faces don't bleed into the hole.
+    # Generative SD already respects the mask; TELEA-scrubbing the couple leaves muddy context
+    # that the diffusion model copies as a flat ghost plaque.
+    if getattr(backend, "is_generative", False):
+        crop_for_inpaint = crop_rgb
+    else:
+        crop_for_inpaint = _scrub_other_people(crop_rgb, crop_hard)
     textured_bg = _ring_edge_density(crop_rgb, crop_hard > 127) > 14.0
     water_bg = _is_water_or_sky_ring(crop_rgb, crop_hard > 127)
-    use_seamless = mode == "ai" and not textured_bg and not water_bg
+    use_seamless = mode == "ai" and not textured_bg and not water_bg and not getattr(
+        backend, "is_generative", False
+    )
 
-    backend = get_backend(mode)
     try:
         inpainted_crop = backend.inpaint_crop(crop_for_inpaint, crop_hard)
     except InpaintError as exc:
@@ -1144,14 +1150,31 @@ def _inpaint_once(
         else:
             raise
 
+    # Re-read after inpaint — AiRemoveBackend clears is_generative on LaMa fallback.
+    generative = bool(getattr(backend, "is_generative", False))
+
     if mode == "ai":
-        # Context fill / water clone must sample the real photo, not the scrubbed copy.
-        inpainted_crop = _hybrid_context_fill(crop_rgb, inpainted_crop, crop_hard)
+        # Generative SD fill already synthesizes water/sky — do not overwrite with
+        # TELEA/column-clone (that path exists to rescue classical LaMa plaques).
+        if generative:
+            inpainted_crop = _match_fill_to_context(crop_rgb, inpainted_crop, crop_hard)
+        else:
+            # Context fill / water clone must sample the real photo, not the scrubbed copy.
+            inpainted_crop = _hybrid_context_fill(crop_rgb, inpainted_crop, crop_hard)
 
     seamless = _try_seamless_blend(crop_rgb, inpainted_crop, crop_hard) if use_seamless else None
     base_patch = seamless if seamless is not None else inpainted_crop
 
-    blend = _build_blend_mask(crop_hard, feather_px)
+    # Generative: tighter hole + harder composite so feather doesn't reintroduce the person.
+    blend_hard = crop_hard
+    if generative:
+        import cv2
+
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+        blend_hard = (cv2.dilate((crop_hard > 127).astype(np.uint8), k) * 255)
+        feather_px = max(2, min(feather_px, 4))
+
+    blend = _build_blend_mask(blend_hard, feather_px)
     if crop_protect is not None and crop_protect.any():
         import cv2
 
@@ -1161,7 +1184,7 @@ def _inpaint_once(
             cv2.dilate(crop_protect.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (feather_px * 2 + 1, feather_px * 2 + 1)))
             > 0
         )
-        hard_b = crop_hard > 127
+        hard_b = blend_hard > 127
         blend[near_prot] = hard_b[near_prot].astype(np.float32)
         blend[crop_protect] = 0.0
     # Interior stays fully opaque; composite against the *original* crop (not scrubbed).
@@ -1169,22 +1192,23 @@ def _inpaint_once(
         base_patch.astype(np.float32) * blend[:, :, None]
         + crop_rgb.astype(np.float32) * (1.0 - blend[:, :, None])
     ).astype(np.uint8)
-    if crop_protect is None or not crop_protect.any():
-        patch = _smooth_transition_band(patch, crop_rgb, blend)
-    else:
-        # Still smooth edges that are not near protected people.
-        import cv2
+    if not generative:
+        if crop_protect is None or not crop_protect.any():
+            patch = _smooth_transition_band(patch, crop_rgb, blend)
+        else:
+            # Still smooth edges that are not near protected people.
+            import cv2
 
-        near_prot = (
-            cv2.dilate(crop_protect.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (21, 21)))
-            > 0
-        )
-        safe_blend = blend.copy()
-        safe_blend[near_prot] = np.where(crop_hard[near_prot] > 127, 1.0, 0.0)
-        patch = _smooth_transition_band(patch, crop_rgb, safe_blend)
+            near_prot = (
+                cv2.dilate(crop_protect.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (21, 21)))
+                > 0
+            )
+            safe_blend = blend.copy()
+            safe_blend[near_prot] = np.where(crop_hard[near_prot] > 127, 1.0, 0.0)
+            patch = _smooth_transition_band(patch, crop_rgb, safe_blend)
 
     # Edge polish can reintroduce soft ghosts on rippled water — skip there.
-    if mode == "ai" and not textured_bg and not water_bg:
+    if mode == "ai" and not generative and not textured_bg and not water_bg:
         patch = _ai_edge_polish(patch, crop_rgb, crop_hard, blend)
 
     result = rgb.copy()
@@ -1198,7 +1222,7 @@ def inpaint_objects(
     mode: RemovalMode = "ai",
     edge_softness: float = 1.0,
 ) -> Image.Image:
-    """Remove masked regions using AI Remove (torch big-LaMa) or Quick Remove (ONNX LaMa)."""
+    """Remove masked regions using AI Remove (SD2 generative) or Quick Remove (ONNX LaMa)."""
     rgb = _pil_to_rgb_array(image)
 
     msk = np.array(mask.convert("L"))

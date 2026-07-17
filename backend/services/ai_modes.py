@@ -8,7 +8,7 @@ AI_MODES: dict[str, dict[str, Any]] = {
     "best_quality": {
         "id": "best_quality",
         "name": "Best Quality",
-        "description": "Heaviest models — best results, slower processing.",
+        "description": "Heaviest models — generative SD1.5 remove (~4 GB). GPU recommended; CPU is slow.",
         "bg_model": "massive",
         "removal": "ai",
         "upscale_max_scale": 4,

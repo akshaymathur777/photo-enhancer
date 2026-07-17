@@ -11,6 +11,17 @@ RemovalMode = Literal["ai", "quick"]
 
 _lama_torch_model = None
 _lama_onnx_session = None
+_sd_pipe = None
+
+# Object-removal prompts: synthesize plausible background, never people.
+_SD_REMOVE_PROMPT = (
+    "high quality photograph, natural background continuation, seamless texture, "
+    "photorealistic detail, consistent lighting"
+)
+_SD_REMOVE_NEGATIVE = (
+    "person, people, human, man, woman, child, face, body, silhouette, ghost, "
+    "arms, legs, clothing, blurry, deformed, low quality, watermark, text, artifacts"
+)
 
 
 class InpaintError(Exception):
@@ -204,14 +215,186 @@ def inpaint_patch_opencv(
     return cv2.inpaint(rgb, hard, radius, flag)
 
 
+def _get_sd_pipe():
+    """Lazy-load Stable Diffusion 1.5 Inpainting (local weights under models/)."""
+    global _sd_pipe
+    if _sd_pipe is None:
+        import torch
+        from diffusers import StableDiffusionInpaintPipeline
+
+        from services.model_download import ensure_sd_inpaint
+
+        model_dir = ensure_sd_inpaint()
+        use_cuda = torch.cuda.is_available()
+        device = torch.device("cuda" if use_cuda else "cpu")
+        dtype = torch.float16 if use_cuda else torch.float32
+        pipe = StableDiffusionInpaintPipeline.from_pretrained(
+            str(model_dir),
+            torch_dtype=dtype,
+            safety_checker=None,
+            requires_safety_checker=False,
+            local_files_only=True,
+        )
+        pipe = pipe.to(device)
+        pipe.set_progress_bar_config(disable=True)
+        pipe.enable_attention_slicing()
+        try:
+            pipe.vae.enable_slicing()
+        except Exception:
+            pass
+        _sd_pipe = (pipe, device, use_cuda)
+    return _sd_pipe
+
+
+def inpaint_patch_sd(
+    rgb: np.ndarray,
+    mask: np.ndarray,
+    *,
+    max_side: int | None = None,
+    num_steps: int | None = None,
+) -> np.ndarray:
+    """Generative inpaint via Stable Diffusion 1.5 Inpainting.
+
+    Runs at up to 512px (CPU) or 768px (CUDA) on the long side, then pastes
+    the synthesized hole back into the original-resolution crop.
+    """
+    import cv2
+    import torch
+
+    hard = mask > 127
+    if not hard.any():
+        return rgb.copy()
+
+    pipe, device, use_cuda = _get_sd_pipe()
+    if max_side is None:
+        max_side = 768 if use_cuda else 512
+    if num_steps is None:
+        num_steps = 30 if use_cuda else 20
+
+    # Grow the hole slightly so hair fringes / silhouette edges get regenerated.
+    k_grow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    hard_grown = cv2.dilate(hard.astype(np.uint8), k_grow, iterations=1) > 0
+
+    h, w = rgb.shape[:2]
+    scale = min(1.0, float(max_side) / float(max(h, w)))
+    nw = max(8, int(round(w * scale)))
+    nh = max(8, int(round(h * scale)))
+    nw = _ceil_modulo(nw, 8)
+    nh = _ceil_modulo(nh, 8)
+
+    if nw != w or nh != h:
+        img_small = cv2.resize(rgb, (nw, nh), interpolation=cv2.INTER_AREA)
+        msk_small = cv2.resize(
+            (hard_grown.astype(np.uint8) * 255),
+            (nw, nh),
+            interpolation=cv2.INTER_NEAREST,
+        )
+    else:
+        img_small = rgb
+        msk_small = (hard_grown.astype(np.uint8) * 255)
+
+    # Binary mask only — soft SAM feathers cause semi-transparent person ghosts.
+    msk_small = ((msk_small > 127).astype(np.uint8)) * 255
+
+    pil_img = Image.fromarray(img_small)
+    pil_msk = Image.fromarray(msk_small)
+
+    # Prefer water-aware prompt when the hole sits in water/sky.
+    prompt = _SD_REMOVE_PROMPT
+    try:
+        import cv2 as _cv2
+
+        hsv = _cv2.cvtColor(rgb, _cv2.COLOR_RGB2HSV)
+        ring = _cv2.dilate(hard.astype(np.uint8), _cv2.getStructuringElement(_cv2.MORPH_ELLIPSE, (41, 41))) > 0
+        ring = ring & (~hard)
+        if int(ring.sum()) >= 64:
+            hs = hsv[ring]
+            blueish = ((hs[:, 0] >= 85) & (hs[:, 0] <= 135) & (hs[:, 1] >= 12)).mean()
+            if blueish > 0.35:
+                prompt = (
+                    "natural ocean water with fine sunlit ripples, rocky coastal shore, "
+                    "distant hills across the bay, seamless photorealistic photograph, "
+                    "consistent lighting, no people"
+                )
+    except Exception:
+        pass
+
+    generator = torch.Generator(device=device).manual_seed(42)
+    with torch.inference_mode():
+        kwargs = dict(
+            prompt=prompt,
+            negative_prompt=_SD_REMOVE_NEGATIVE,
+            image=pil_img,
+            mask_image=pil_msk,
+            num_inference_steps=int(num_steps),
+            guidance_scale=7.0 if use_cuda else 6.0,
+            generator=generator,
+        )
+        try:
+            out = pipe(**kwargs, padding_mask_crop=32).images[0]
+        except TypeError:
+            out = pipe(**kwargs).images[0]
+
+    gen = np.array(out.convert("RGB"))
+    if gen.shape[0] != h or gen.shape[1] != w:
+        gen = cv2.resize(gen, (w, h), interpolation=cv2.INTER_LANCZOS4)
+
+    # Hard paste: never leave original person faintly visible inside the hole.
+    result = rgb.copy()
+    result[hard_grown] = gen[hard_grown]
+
+    region = result[hard]
+    if region.size and region.mean() > 252 and region.std() < 3:
+        raise InpaintError("SD inpaint produced blank white fill in masked region")
+    return result
+
+
 class InpaintBackend(ABC):
+    is_generative: bool = False
+
     @abstractmethod
     def inpaint_crop(self, rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
         ...
 
 
+class GenerativeRemoveBackend(InpaintBackend):
+    """Stable Diffusion 1.5 Inpainting — Best Quality / AI Remove path."""
+
+    is_generative = True
+
+    def inpaint_crop(self, rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        try:
+            return inpaint_patch_sd(rgb, mask)
+        except InpaintError:
+            raise
+        except Exception as exc:
+            raise InpaintError(str(exc)) from exc
+
+
 class AiRemoveBackend(InpaintBackend):
-    """PyTorch big-LaMa at native crop resolution + optional OpenCV polish blend."""
+    """Generative SD1.5 inpaint with LaMa torch fallback."""
+
+    is_generative = True
+
+    def inpaint_crop(self, rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        try:
+            return inpaint_patch_sd(rgb, mask)
+        except Exception as gen_exc:
+            try:
+                out = inpaint_patch_torch(rgb, mask)
+                # Mark that we fell back so callers can apply LaMa-oriented postprocess.
+                self.is_generative = False
+                return out
+            except InpaintError:
+                raise
+            except Exception as lama_exc:
+                raise InpaintError(
+                    f"Generative inpaint failed ({gen_exc}); LaMa fallback failed ({lama_exc})"
+                ) from lama_exc
+
+
+class LamaTorchBackend(InpaintBackend):
+    """PyTorch big-LaMa at native crop resolution (legacy / fallback)."""
 
     def inpaint_crop(self, rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
         try:
