@@ -186,7 +186,13 @@ def inpaint_patch_opencv(rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
     import cv2
 
     hard = ((mask > 127).astype(np.uint8)) * 255
-    radius = max(3, int(min(rgb.shape[:2]) * 0.01))
+    ys, xs = np.where(hard > 0)
+    if len(xs) == 0:
+        return rgb.copy()
+    hole = max(int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1))
+    # Keep radius modest — huge radii are extremely slow and still flatten large holes.
+    radius = max(5, int(min(rgb.shape[:2]) * 0.01), int(hole * 0.02))
+    radius = min(radius, 18)
     return cv2.inpaint(rgb, hard, radius, cv2.INPAINT_TELEA)
 
 
