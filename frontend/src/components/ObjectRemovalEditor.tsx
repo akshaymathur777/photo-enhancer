@@ -454,7 +454,7 @@ export function ObjectRemovalEditor({
       )}
       {inpaintMode === "ai" && (
         <p className="text-xs text-purple-300/90 bg-purple-950/30 border border-purple-700/30 rounded-lg px-3 py-2">
-          AI Remove downloads Stable Diffusion 1.5 Inpaint (~4 GB) on first use. GPU strongly recommended; CPU works but can take several minutes per removal.
+          AI Remove uses Stable Diffusion 1.5 Inpaint (~4 GB) on first use. NVIDIA GPU strongly recommended (CUDA). CPU works but is slow and softer on water.
         </p>
       )}
 

@@ -668,7 +668,7 @@ def _match_fill_to_context(
     inpainted: np.ndarray,
     mask: np.ndarray,
 ) -> np.ndarray:
-    """Nudge washed LaMa fills toward surrounding mean color (coastal water/sky)."""
+    """Nudge washed fills toward surrounding mean color (prefer water above on coasts)."""
     import cv2
 
     hard = mask > 127
@@ -680,15 +680,29 @@ def _match_fill_to_context(
     if int(ring.sum()) < 64:
         return inpainted
 
-    ring_mean = original[ring].astype(np.float32).mean(axis=0)
+    water = _water_like_pixels(original) & (~hard)
+    ref = ring & water
+    if int(ref.sum()) < 64:
+        # Coastal selfie: water lives above the hole; ring is often hair/rocks.
+        ys, xs = np.where(hard)
+        y_top = int(ys.min())
+        x0, x1 = int(xs.min()), int(xs.max())
+        y0 = max(0, y_top - max(64, int((ys.max() - y_top + 1) * 0.6)))
+        band = np.zeros_like(hard, dtype=bool)
+        band[y0:y_top, max(0, x0 - 20) : min(hard.shape[1], x1 + 21)] = True
+        ref = band & water
+    if int(ref.sum()) < 64:
+        ref = ring
+
+    ring_mean = original[ref].astype(np.float32).mean(axis=0)
     fill_mean = inpainted[hard].astype(np.float32).mean(axis=0)
     delta = ring_mean - fill_mean
     drift = float(np.abs(delta).mean())
-    if drift < 6.0:
+    if drift < 4.0:
         return inpainted
 
-    # Stronger correction when LaMa drifts bright/grey on water.
-    strength = float(np.clip(drift / 28.0, 0.45, 0.90))
+    # Stronger correction when fill drifts bright/grey vs real water.
+    strength = float(np.clip(drift / 22.0, 0.55, 0.95))
     out = inpainted.astype(np.float32)
     out[hard] = np.clip(out[hard] + delta * strength, 0, 255)
     return out.astype(np.uint8)
@@ -699,7 +713,10 @@ def _inject_context_texture(
     inpainted: np.ndarray,
     mask: np.ndarray,
 ) -> np.ndarray:
-    """Add real water/sky ripple energy into flat LaMa fills."""
+    """Add real water/sky ripple energy into flat fills.
+
+    Prefers a 2D water tile from above the hole (avoids vertical stretch smears).
+    """
     import cv2
 
     hard = mask > 127
@@ -718,35 +735,59 @@ def _inject_context_texture(
 
     fill = inpainted.astype(np.float32)
     orig_f = original.astype(np.float32)
-    sigma = 2.4
+    sigma = 2.0
     blur_o = cv2.GaussianBlur(orig_f, (0, 0), sigmaX=sigma)
     blur_f = cv2.GaussianBlur(fill, (0, 0), sigmaX=sigma)
     hf_o = orig_f - blur_o
 
-    ring_lum = original[ring].astype(np.float32).mean(axis=1)
-    water_floor = float(np.percentile(ring_lum, 20)) - 8.0
-    lum = original.astype(np.float32).mean(axis=2)
-    waterish = (~hard) & (lum >= water_floor)
-
+    waterish = _water_like_pixels(original) & (~hard)
+    ys_h, xs_h = np.where(hard)
+    y_top = int(ys_h.min())
     hf_fill = np.zeros_like(fill)
-    h, _w = hard.shape
-    for y in range(h):
-        if not hard[y].any():
-            continue
-        water_xs = np.where(waterish[y])[0]
-        src_y = y
-        if len(water_xs) < 8:
-            yy = y - 1
-            while yy >= 0 and int(waterish[yy].sum()) < 8:
-                yy -= 1
-            if yy < 0:
+
+    # Prefer a compact water tile above the hole for 2D sampling.
+    above = waterish.copy()
+    above[y_top:, :] = False
+    used_tile = False
+    if int(above.sum()) >= 400:
+        ay, ax = np.where(above)
+        ay0, ay1 = int(np.percentile(ay, 8)), int(np.percentile(ay, 92))
+        ax0, ax1 = int(np.percentile(ax, 8)), int(np.percentile(ax, 92))
+        if ay1 > ay0 + 12 and ax1 > ax0 + 24:
+            tile_hf = hf_o[ay0 : ay1 + 1, ax0 : ax1 + 1]
+            th, tw = tile_hf.shape[:2]
+            x_min = int(xs_h.min())
+            for y, x in zip(ys_h, xs_h):
+                sy = (y - y_top) % th
+                sx = (x - x_min) % tw
+                sy = (sy + (x * 3) % 5) % th
+                sx = (sx + (y * 5) % 7) % tw
+                hf_fill[y, x] = tile_hf[sy, sx]
+            used_tile = float(np.abs(hf_fill[hard]).mean()) >= 0.5
+
+    if not used_tile:
+        # Fallback: per-row nearest water (legacy).
+        water_floor = float(np.percentile(original[ring].astype(np.float32).mean(axis=1), 20)) - 8.0
+        lum = original.astype(np.float32).mean(axis=2)
+        water_rows = (~hard) & (lum >= water_floor)
+        h, _w = hard.shape
+        for y in range(h):
+            if not hard[y].any():
                 continue
-            water_xs = np.where(waterish[yy])[0]
-            src_y = yy
-        mask_xs = np.where(hard[y])[0]
-        for i, x in enumerate(mask_xs):
-            src_x = int(water_xs[i % len(water_xs)])
-            hf_fill[y, x] = hf_o[src_y, src_x]
+            water_xs = np.where(water_rows[y])[0]
+            src_y = y
+            if len(water_xs) < 8:
+                yy = y - 1
+                while yy >= 0 and int(water_rows[yy].sum()) < 8:
+                    yy -= 1
+                if yy < 0:
+                    continue
+                water_xs = np.where(water_rows[yy])[0]
+                src_y = yy
+            mask_xs = np.where(hard[y])[0]
+            for i, x in enumerate(mask_xs):
+                src_x = int(water_xs[i % len(water_xs)])
+                hf_fill[y, x] = hf_o[src_y, src_x]
 
     try:
         telea = inpaint_patch_opencv(original, mask).astype(np.float32)
@@ -754,9 +795,11 @@ def _inject_context_texture(
         dist = cv2.distanceTransform((hard.astype(np.uint8)) * 255, cv2.DIST_L2, 5)
         edge_w = np.clip(1.0 - dist / 18.0, 0.0, 1.0)[:, :, None]
         hf_combined = hf_fill * (1.0 - edge_w) + (telea - blur_t) * edge_w
-        blur_f = blur_f * 0.80 + blur_t * 0.20
+        # Keep more of the generative / prior low-frequency; boost real HF.
+        blur_f = blur_f * 0.88 + blur_t * 0.12
+        hf_combined = hf_combined * 1.15
     except Exception:
-        hf_combined = hf_fill
+        hf_combined = hf_fill * 1.15
 
     textured = blur_f + hf_combined
     out = fill.copy()
@@ -786,16 +829,33 @@ def _all_people_binary(arr: np.ndarray, conf: float = 0.25) -> np.ndarray:
 
 
 def _is_water_or_sky_ring(original: np.ndarray, hard: np.ndarray) -> bool:
-    """True when the ring around the hole looks like water/sky (not foliage/faces)."""
+    """True when water/sky sits around or above the hole (coastal third-person cases).
+
+    Ring-only checks fail when couple hair/rocks dominate the immediate halo while
+    the real background to synthesize is water above the subject.
+    """
     import cv2
 
+    if not hard.any():
+        return False
+    waterish = _water_like_pixels(original)
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (51, 51))
     ring = (cv2.dilate(hard.astype(np.uint8), k) > 0) & (~hard)
-    if int(ring.sum()) < 128:
+    if int(ring.sum()) >= 128 and float(waterish[ring].mean()) > 0.22:
+        return True
+
+    # Band above the hole — typical selfie with person standing in front of bay.
+    ys, xs = np.where(hard)
+    y_top = int(ys.min())
+    x0, x1 = int(xs.min()), int(xs.max())
+    h, _w = hard.shape
+    y0 = max(0, y_top - max(48, int((ys.max() - y_top + 1) * 0.55)))
+    band = np.zeros_like(hard, dtype=bool)
+    band[y0:y_top, x0 : x1 + 1] = True
+    band &= ~hard
+    if int(band.sum()) < 128:
         return False
-    # Reuse strict water map (excludes people / white shirts).
-    waterish = _water_like_pixels(original)
-    return float(waterish[ring].mean()) > 0.28
+    return float(waterish[band].mean()) > 0.30
 
 
 def _scrub_other_people(rgb: np.ndarray, hard_mask: np.ndarray) -> np.ndarray:
@@ -823,16 +883,28 @@ def _scrub_other_people(rgb: np.ndarray, hard_mask: np.ndarray) -> np.ndarray:
 
 
 def _water_like_pixels(rgb: np.ndarray) -> np.ndarray:
-    """Boolean map of water/sky-like pixels (exclude people and low-sat clothing)."""
+    """Boolean map of water/sky-like pixels (exclude people and low-sat clothing).
+
+    Overcast coastal water is often grey/tan (low sat, mixed hue) — not pure blue.
+    """
     import cv2
 
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV).astype(np.float32)
     h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
-    # Require blue/cyan hue — low-sat alone matches white shirts and causes ghost copies.
+    # Classic blue/cyan open water.
     blue_water = (h >= 85) & (h <= 135) & (s >= 12) & (s <= 110) & (v > 95)
-    # Bright haze/sky over water (still exclude pure white clothing via mild sat floor).
+    # Bright haze/sky over water.
     bright_haze = (v > 170) & (s < 45) & (s >= 8) & (h >= 70) & (h <= 140)
-    water = blue_water | bright_haze
+    # Grey/sunlit coastal water (overcast ripples): low sat, mid-high value.
+    # Exclude high-sat rocks/grass (s>=50) and near-white clothing (v>=235 & s<8).
+    grey_coastal = (
+        (s >= 3)
+        & (s < 48)
+        & (v > 125)
+        & (v < 235)
+        & ~((h >= 35) & (h <= 85) & (s >= 40))  # green vegetation
+    )
+    water = blue_water | bright_haze | grey_coastal
     people = _all_people_binary(rgb) > 0
     if people.any():
         water = water & (~people)
@@ -947,6 +1019,103 @@ def _water_primary_fill(original: np.ndarray, lama: np.ndarray, mask: np.ndarray
         base = telea
 
     return _match_fill_to_context(original, base, (hard.astype(np.uint8) * 255))
+
+
+def _fill_texture_energy(img: np.ndarray, hard: np.ndarray) -> float:
+    """High-frequency energy inside the hole (ripples score high; soft plaques score low)."""
+    import cv2
+
+    if not hard.any():
+        return 0.0
+    g = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    return float(np.abs(g[hard] - cv2.GaussianBlur(g, (0, 0), 2.0)[hard]).mean())
+
+
+def _is_soft_water_plaque(original: np.ndarray, filled: np.ndarray, mask: np.ndarray) -> bool:
+    """True when generative/classical fill is flatter than surrounding water."""
+    import cv2
+
+    hard = mask > 127
+    if int(hard.sum()) < 200:
+        return False
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (51, 51))
+    ring = (cv2.dilate(hard.astype(np.uint8), k) > 0) & (~hard)
+    water = _water_like_pixels(original)
+    ring_w = ring & water
+    if int(ring_w.sum()) < 64:
+        # Fall back to upward water band when halo is couple hair/rocks.
+        ys, xs = np.where(hard)
+        y_top = int(ys.min())
+        x0, x1 = int(xs.min()), int(xs.max())
+        y0 = max(0, y_top - 80)
+        band = np.zeros_like(hard, dtype=bool)
+        band[y0:y_top, x0 : x1 + 1] = True
+        ring_w = band & water & (~hard)
+    if int(ring_w.sum()) < 64:
+        return False
+    fill_tex = _fill_texture_energy(filled, hard)
+    ref_tex = _fill_texture_energy(original, ring_w)
+    if ref_tex < 2.5:
+        return False
+    # Soft plaque: fill much flatter than real water, or washed luminance.
+    gray_o = cv2.cvtColor(original, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    gray_f = cv2.cvtColor(filled, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    lum_delta = abs(float(gray_f[hard].mean()) - float(gray_o[ring_w].mean()))
+    return (fill_tex < ref_tex * 0.72) or (fill_tex < 6.5) or (lum_delta > 8.0)
+
+
+def _rescue_soft_generative_water(
+    original: np.ndarray,
+    generative_fill: np.ndarray,
+    mask: np.ndarray,
+) -> np.ndarray:
+    """When SD leaves a soft water plaque, rebuild ripple energy from the photo.
+
+    Prefer keeping SD low-frequency structure and injecting real high-frequency
+    water texture. Fall back to water-primary synthesis when still plaque-like.
+    """
+    if not _is_water_or_sky_ring(original, mask > 127):
+        return _match_fill_to_context(original, generative_fill, mask)
+
+    enriched = _inject_context_texture(original, generative_fill, mask)
+    enriched = _match_fill_to_context(original, enriched, mask)
+
+    if not _is_soft_water_plaque(original, enriched, mask):
+        return enriched
+
+    water = _water_primary_fill(original, enriched, mask)
+    water = _inject_context_texture(original, water, mask)
+    water = _match_fill_to_context(original, water, mask)
+    # Prefer real-water synthesis heavily — SD1.5 plaques stay visible otherwise.
+    mix = 0.88
+    return (
+        water.astype(np.float32) * mix + enriched.astype(np.float32) * (1.0 - mix)
+    ).astype(np.uint8)
+
+
+def _soft_plaque_residual_mask(
+    original: np.ndarray,
+    result: np.ndarray,
+    hard_mask: np.ndarray,
+    protect: np.ndarray | None = None,
+) -> np.ndarray | None:
+    """Second-pass mask for leftover soft water plaques after generative fill."""
+    import cv2
+
+    hard = hard_mask > 127
+    if not hard.any() or not _is_soft_water_plaque(original, result, hard_mask):
+        return None
+
+    # Re-fill the whole subject hole (plus a mild hair halo), not just edges.
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (17, 17))
+    res_u8 = cv2.dilate(hard.astype(np.uint8), k, iterations=1)
+    res_u8 = _preserve_occlusion_holes(hard.astype(np.uint8), res_u8)
+    if protect is not None and protect.any():
+        res_u8 = res_u8 & (~protect.astype(np.uint8))
+        res_u8 = np.maximum(res_u8, hard.astype(np.uint8) & (~protect.astype(np.uint8)))
+    if int(res_u8.sum()) < 200:
+        return None
+    return res_u8 * 255
 
 
 def _hybrid_context_fill(
@@ -1150,14 +1319,24 @@ def _inpaint_once(
         else:
             raise
 
+    # Never let generative dilation / fill overwrite protected people (couple hair).
+    if crop_protect is not None and crop_protect.any():
+        inpainted_crop = inpainted_crop.copy()
+        inpainted_crop[crop_protect] = crop_rgb[crop_protect]
+
     # Re-read after inpaint — AiRemoveBackend clears is_generative on LaMa fallback.
     generative = bool(getattr(backend, "is_generative", False))
 
     if mode == "ai":
-        # Generative SD fill already synthesizes water/sky — do not overwrite with
-        # TELEA/column-clone (that path exists to rescue classical LaMa plaques).
+        # Generative SD at 512px often leaves soft water plaques — rescue with real ripples.
+        # Classical LaMa still uses the full hybrid/water-primary path.
         if generative:
-            inpainted_crop = _match_fill_to_context(crop_rgb, inpainted_crop, crop_hard)
+            if water_bg:
+                inpainted_crop = _rescue_soft_generative_water(
+                    crop_rgb, inpainted_crop, crop_hard
+                )
+            else:
+                inpainted_crop = _match_fill_to_context(crop_rgb, inpainted_crop, crop_hard)
         else:
             # Context fill / water clone must sample the real photo, not the scrubbed copy.
             inpainted_crop = _hybrid_context_fill(crop_rgb, inpainted_crop, crop_hard)
@@ -1239,19 +1418,42 @@ def inpaint_objects(
     if _is_water_or_sky_ring(rgb, hard_mask > 127):
         import cv2
 
-        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
-        grown = cv2.dilate((hard_mask > 127).astype(np.uint8), k, iterations=1)
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+        grown = cv2.dilate((hard_mask > 127).astype(np.uint8), k, iterations=2)
         grown = _preserve_occlusion_holes(raw, grown)
         hard_mask = _apply_people_protect(grown * 255, protect, raw=raw)
 
     result = _inpaint_once(rgb, hard_mask, mode=mode, edge_softness=edge_softness, protect=protect)
 
     # Second pass: expand into leftover silhouette / hair ghost and re-fill.
-    # Skip on water/sky — residual growth often re-damages couple hair without helping.
-    if mode == "ai" and not _is_water_or_sky_ring(rgb, hard_mask > 127):
-        residual = _residual_ghost_mask(rgb, result, hard_mask, protect=protect)
-        if residual is not None:
-            result = _inpaint_once(rgb, residual, mode=mode, edge_softness=edge_softness, protect=protect)
+    # On water/sky, catch soft generative plaques with a water-texture rescue (no 2nd SD).
+    if mode == "ai":
+        water_bg = _is_water_or_sky_ring(rgb, hard_mask > 127)
+        if water_bg:
+            residual = _soft_plaque_residual_mask(rgb, result, hard_mask, protect=protect)
+            if residual is not None:
+                rescued = _rescue_soft_generative_water(rgb, result, residual)
+                hard_r = residual > 127
+                if protect is not None and protect.any():
+                    hard_r = hard_r & (~protect)
+                out = result.copy()
+                out[hard_r] = rescued[hard_r]
+                # Mild feather at residual edge so the rescue doesn't cut a hard seam.
+                import cv2
+
+                feather = cv2.GaussianBlur(hard_r.astype(np.float32), (0, 0), 2.0)
+                if protect is not None and protect.any():
+                    feather[protect] = 0.0
+                result = (
+                    out.astype(np.float32) * feather[:, :, None]
+                    + result.astype(np.float32) * (1.0 - feather[:, :, None])
+                ).astype(np.uint8)
+        else:
+            residual = _residual_ghost_mask(rgb, result, hard_mask, protect=protect)
+            if residual is not None:
+                result = _inpaint_once(
+                    rgb, residual, mode=mode, edge_softness=edge_softness, protect=protect
+                )
 
     return Image.fromarray(result)
 

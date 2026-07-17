@@ -72,7 +72,17 @@ def run(name: str, path: Path, click: tuple[int, int], max_side: int | None = 16
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--only", choices=["coastal", "library", "all"], default="all")
+    parser.add_argument("--tag", default="", help="Output name prefix tag, e.g. sd_v2")
+    args = parser.parse_args()
+    tag = f"{args.tag}_" if args.tag else ""
+
     # Full-res coastal click was (1088,1200) on 2316x3088
-    run("coastal", COASTAL, (1088, 1200), max_side=1600)
-    run("library", LIBRARY, (420, 700), max_side=1280)
+    if args.only in ("coastal", "all"):
+        run(f"{tag}coastal" if tag else "coastal", COASTAL, (1088, 1200), max_side=1600)
+    if args.only in ("library", "all"):
+        run(f"{tag}library" if tag else "library", LIBRARY, (420, 700), max_side=1280)
     print("\nDONE", flush=True)

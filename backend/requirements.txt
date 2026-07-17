@@ -10,6 +10,8 @@ pillow-heif>=0.18.0
 httpx>=0.27.0
 certifi>=2024.0.0
 ultralytics>=8.3.0
+# Prefer CUDA builds when an NVIDIA GPU is available, e.g.:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 torch>=2.0.0
 torchvision>=0.15.0
 spandrel>=0.4.0

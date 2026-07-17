@@ -16,11 +16,21 @@ _sd_pipe = None
 # Object-removal prompts: synthesize plausible background, never people.
 _SD_REMOVE_PROMPT = (
     "high quality photograph, natural background continuation, seamless texture, "
-    "photorealistic detail, consistent lighting"
+    "photorealistic detail, consistent lighting, sharp focus"
 )
 _SD_REMOVE_NEGATIVE = (
     "person, people, human, man, woman, child, face, body, silhouette, ghost, "
-    "arms, legs, clothing, blurry, deformed, low quality, watermark, text, artifacts"
+    "arms, legs, clothing, blurry, deformed, low quality, watermark, text, artifacts, "
+    "flat, smear, plaque, muddy, soft focus, painted, watercolor, plastic"
+)
+_SD_WATER_PROMPT = (
+    "photorealistic ocean bay water with fine natural ripples and sunlit specular highlights, "
+    "continuous rocky shoreline, distant green hills across the water, "
+    "overcast daylight, seamless photograph, matching surrounding texture, no people"
+)
+_SD_WATER_NEGATIVE = (
+    _SD_REMOVE_NEGATIVE
+    + ", smooth blob, repeating pattern, stretched pixels, low-resolution patch"
 )
 
 
@@ -246,6 +256,60 @@ def _get_sd_pipe():
     return _sd_pipe
 
 
+def _detect_waterish_hole(rgb: np.ndarray, hard: np.ndarray) -> bool:
+    """True when water/sky sits in the ring or in a band above the hole."""
+    import cv2
+
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV).astype(np.float32)
+    hs, ss, vs = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    ring = cv2.dilate(hard.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (41, 41))) > 0
+    ring = ring & (~hard)
+    if int(ring.sum()) >= 64:
+        blueish = ((hs[ring] >= 85) & (hs[ring] <= 135) & (ss[ring] >= 12)).mean()
+        grey_coast = ((ss[ring] < 48) & (vs[ring] > 125) & (vs[ring] < 235)).mean()
+        if blueish > 0.28 or grey_coast > 0.35:
+            return True
+    ys, xs = np.where(hard)
+    if len(ys) == 0:
+        return False
+    y_top = int(ys.min())
+    x0, x1 = int(xs.min()), int(xs.max())
+    y0 = max(0, y_top - max(48, int((ys.max() - y_top + 1) * 0.5)))
+    band = np.zeros_like(hard, dtype=bool)
+    band[y0:y_top, x0 : x1 + 1] = True
+    band &= ~hard
+    if int(band.sum()) < 64:
+        return False
+    grey_coast = ((ss[band] < 48) & (vs[band] > 125) & (vs[band] < 235)).mean()
+    blueish = ((hs[band] >= 85) & (hs[band] <= 135) & (ss[band] >= 12)).mean()
+    return bool(blueish > 0.25 or grey_coast > 0.30)
+
+
+def _seed_water_context(rgb: np.ndarray, hard: np.ndarray) -> np.ndarray:
+    """Replace the hole with a TELEA water-ish seed so SD refines instead of inventing a blob."""
+    import cv2
+
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV).astype(np.float32)
+    h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    water = ((s < 48) & (v > 125) & (v < 235)) | ((h >= 85) & (h <= 135) & (s >= 12) & (v > 95))
+    water = water & (~hard)
+    guide = rgb.copy()
+    if int(water.sum()) >= 256:
+        mean_c = rgb[water].astype(np.float32).mean(axis=0)
+        water_img = rgb.copy()
+        water_img[~water] = mean_c
+        water_blur = cv2.GaussianBlur(water_img, (0, 0), sigmaX=7.0)
+        guide[~water & ~hard] = water_blur[~water & ~hard]
+    msk = (hard.astype(np.uint8) * 255)
+    try:
+        return cv2.inpaint(guide, msk, 14, cv2.INPAINT_TELEA)
+    except Exception:
+        out = rgb.copy()
+        if int(water.sum()) >= 64:
+            out[hard] = rgb[water].mean(axis=0)
+        return out
+
+
 def inpaint_patch_sd(
     rgb: np.ndarray,
     mask: np.ndarray,
@@ -255,8 +319,11 @@ def inpaint_patch_sd(
 ) -> np.ndarray:
     """Generative inpaint via Stable Diffusion 1.5 Inpainting.
 
-    Runs at up to 512px (CPU) or 768px (CUDA) on the long side, then pastes
+    Runs at up to 640px (CPU) or 768px (CUDA) on the long side, then pastes
     the synthesized hole back into the original-resolution crop.
+
+    On coastal/water holes, seeds the mask with a classical water fill and runs
+    SD at reduced strength so it refines ripples instead of inventing a soft plaque.
     """
     import cv2
     import torch
@@ -266,14 +333,25 @@ def inpaint_patch_sd(
         return rgb.copy()
 
     pipe, device, use_cuda = _get_sd_pipe()
-    if max_side is None:
-        max_side = 768 if use_cuda else 512
-    if num_steps is None:
-        num_steps = 30 if use_cuda else 20
+    waterish = _detect_waterish_hole(rgb, hard)
 
-    # Grow the hole slightly so hair fringes / silhouette edges get regenerated.
-    k_grow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-    hard_grown = cv2.dilate(hard.astype(np.uint8), k_grow, iterations=1) > 0
+    # Water holes: CUDA 768 is the practical sweet spot for SD1.5 (1024 adds cost, little gain).
+    if max_side is None:
+        if use_cuda:
+            max_side = 768
+        else:
+            max_side = 640
+    if num_steps is None:
+        num_steps = 40 if use_cuda else 32
+
+    # Grow the hole so hair fringes / silhouette edges get regenerated.
+    grow_k = 21 if waterish else 17
+    grow_iters = 2 if waterish else 1
+    k_grow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (grow_k, grow_k))
+    hard_grown = cv2.dilate(hard.astype(np.uint8), k_grow, iterations=grow_iters) > 0
+
+    # Water: seed the hole so SD is not staring at a person (which yields white plaques).
+    src_rgb = _seed_water_context(rgb, hard_grown) if waterish else rgb
 
     h, w = rgb.shape[:2]
     scale = min(1.0, float(max_side) / float(max(h, w)))
@@ -283,14 +361,14 @@ def inpaint_patch_sd(
     nh = _ceil_modulo(nh, 8)
 
     if nw != w or nh != h:
-        img_small = cv2.resize(rgb, (nw, nh), interpolation=cv2.INTER_AREA)
+        img_small = cv2.resize(src_rgb, (nw, nh), interpolation=cv2.INTER_AREA)
         msk_small = cv2.resize(
             (hard_grown.astype(np.uint8) * 255),
             (nw, nh),
             interpolation=cv2.INTER_NEAREST,
         )
     else:
-        img_small = rgb
+        img_small = src_rgb
         msk_small = (hard_grown.astype(np.uint8) * 255)
 
     # Binary mask only — soft SAM feathers cause semi-transparent person ghosts.
@@ -299,45 +377,52 @@ def inpaint_patch_sd(
     pil_img = Image.fromarray(img_small)
     pil_msk = Image.fromarray(msk_small)
 
-    # Prefer water-aware prompt when the hole sits in water/sky.
-    prompt = _SD_REMOVE_PROMPT
-    try:
-        import cv2 as _cv2
+    prompt = _SD_WATER_PROMPT if waterish else _SD_REMOVE_PROMPT
+    negative = _SD_WATER_NEGATIVE if waterish else _SD_REMOVE_NEGATIVE
+    # Water: mostly generative on a water seed (person gone) so ripples can appear.
+    # Too-low strength just keeps the soft TELEA plaque.
+    strength = 0.88 if waterish else 1.0
+    guidance = 7.0 if waterish else (7.5 if use_cuda else 7.0)
 
-        hsv = _cv2.cvtColor(rgb, _cv2.COLOR_RGB2HSV)
-        ring = _cv2.dilate(hard.astype(np.uint8), _cv2.getStructuringElement(_cv2.MORPH_ELLIPSE, (41, 41))) > 0
-        ring = ring & (~hard)
-        if int(ring.sum()) >= 64:
-            hs = hsv[ring]
-            blueish = ((hs[:, 0] >= 85) & (hs[:, 0] <= 135) & (hs[:, 1] >= 12)).mean()
-            if blueish > 0.35:
-                prompt = (
-                    "natural ocean water with fine sunlit ripples, rocky coastal shore, "
-                    "distant hills across the bay, seamless photorealistic photograph, "
-                    "consistent lighting, no people"
-                )
-    except Exception:
-        pass
-
-    generator = torch.Generator(device=device).manual_seed(42)
-    with torch.inference_mode():
+    def _run_once(seed: int):
+        generator = torch.Generator(device=device).manual_seed(int(seed))
         kwargs = dict(
             prompt=prompt,
-            negative_prompt=_SD_REMOVE_NEGATIVE,
+            negative_prompt=negative,
             image=pil_img,
             mask_image=pil_msk,
             num_inference_steps=int(num_steps),
-            guidance_scale=7.0 if use_cuda else 6.0,
+            guidance_scale=float(guidance),
+            strength=float(strength),
             generator=generator,
         )
         try:
-            out = pipe(**kwargs, padding_mask_crop=32).images[0]
+            if waterish:
+                return pipe(**kwargs).images[0]
+            return pipe(**kwargs, padding_mask_crop=64).images[0]
         except TypeError:
-            out = pipe(**kwargs).images[0]
+            kwargs.pop("strength", None)
+            return pipe(**kwargs).images[0]
 
-    gen = np.array(out.convert("RGB"))
-    if gen.shape[0] != h or gen.shape[1] != w:
-        gen = cv2.resize(gen, (w, h), interpolation=cv2.INTER_LANCZOS4)
+    with torch.inference_mode():
+        # Water+CUDA: two seeds, keep the more textured / less washed fill.
+        seeds = (42,)
+        best_gen = None
+        best_score = -1.0
+        for seed in seeds:
+            candidate = np.array(_run_once(seed).convert("RGB"))
+            if candidate.shape[0] != h or candidate.shape[1] != w:
+                candidate = cv2.resize(candidate, (w, h), interpolation=cv2.INTER_LANCZOS4)
+            g = cv2.cvtColor(candidate, cv2.COLOR_RGB2GRAY).astype(np.float32)
+            tex = float(np.abs(g[hard_grown] - cv2.GaussianBlur(g, (0, 0), 2.0)[hard_grown]).mean())
+            # Penalize washed / near-white plaques.
+            mean_l = float(g[hard_grown].mean())
+            wash_pen = max(0.0, mean_l - 210.0) * 0.08
+            score = tex - wash_pen
+            if score > best_score:
+                best_score = score
+                best_gen = candidate
+        gen = best_gen
 
     # Hard paste: never leave original person faintly visible inside the hole.
     result = rgb.copy()
