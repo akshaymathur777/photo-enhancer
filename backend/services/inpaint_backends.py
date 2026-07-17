@@ -181,8 +181,13 @@ def inpaint_patch_onnx_tiled(
     return (acc / wsum[:, :, None]).astype(np.uint8)
 
 
-def inpaint_patch_opencv(rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    """OpenCV TELEA inpaint — fast content-aware fallback."""
+def inpaint_patch_opencv(
+    rgb: np.ndarray,
+    mask: np.ndarray,
+    radius: int | None = None,
+    method: str = "telea",
+) -> np.ndarray:
+    """OpenCV content-aware inpaint (TELEA or NS)."""
     import cv2
 
     hard = ((mask > 127).astype(np.uint8)) * 255
@@ -190,10 +195,13 @@ def inpaint_patch_opencv(rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
     if len(xs) == 0:
         return rgb.copy()
     hole = max(int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1))
-    # Keep radius modest — huge radii are extremely slow and still flatten large holes.
-    radius = max(5, int(min(rgb.shape[:2]) * 0.01), int(hole * 0.02))
-    radius = min(radius, 18)
-    return cv2.inpaint(rgb, hard, radius, cv2.INPAINT_TELEA)
+    if radius is None:
+        radius = max(5, int(min(rgb.shape[:2]) * 0.01), int(hole * 0.02))
+        radius = min(radius, 18)
+    else:
+        radius = max(3, min(int(radius), 40))
+    flag = cv2.INPAINT_NS if method.lower() == "ns" else cv2.INPAINT_TELEA
+    return cv2.inpaint(rgb, hard, radius, flag)
 
 
 class InpaintBackend(ABC):
