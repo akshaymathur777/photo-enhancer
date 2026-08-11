@@ -12,6 +12,16 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# Model weights (downloaded at runtime to %APPDATA%\PhotoEnhancer\models\)
+mobile_sam.pt
+sam2.1_b.pt
+yolov8n-seg.pt
+runs/
+
+# Release bundles (attached to GitHub Releases — too large for git)
+PhotoEnhancer-v*-windows-x64.zip
+*.zip
+
 # Node
 frontend/node_modules/
 frontend/dist/
@@ -35,6 +45,11 @@ backend/test_out.jpg
 backend/scripts/_api_test.jpg
 backend/scripts/_test_removal_out.jpg
 backend/scripts/_test*.jpg
+backend/scripts/_eval*/
+backend/scripts/_test_assets/
+backend/scripts/_test_live/
+backend/scripts/_verify_out*/
+backend/scripts/_patch_synth.py
 
 # Build logs
 build-log.txt
