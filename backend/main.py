@@ -118,11 +118,52 @@ def api_warm_models():
         raise _processing_error(exc) from exc
 
 
+BEST_REMOVAL_MODEL_SCENES = {
+    "powerpaint": "Indoor / structured scenes",
+    "sdxl_inpaint": "Water / sky scenes",
+}
+
+
+def _generative_removal_status() -> dict:
+    from services.inpaint_backends import generative_removal_readiness
+    from services.model_download import REGISTRY
+
+    readiness = generative_removal_readiness()
+    present = readiness.get("models_present", {})
+    models = [
+        {
+            "id": entry.id,
+            "name": entry.name,
+            "size_estimate_mb": entry.size_estimate_mb,
+            "scenes": BEST_REMOVAL_MODEL_SCENES[entry.id],
+            "present": bool(present.get(entry.id, False)),
+        }
+        for entry in REGISTRY
+        if entry.id in BEST_REMOVAL_MODEL_SCENES
+    ]
+    return {
+        "cuda": readiness["cuda"],
+        "engine": readiness["engine"],
+        "scenes": readiness["scenes"],
+        "ready": readiness["ready"],
+        "models": models,
+        "missing_model_ids": [m["id"] for m in models if not m["present"]],
+    }
+
+
 @app.get("/api/models/status")
 def api_models_status():
     from services.model_download import get_models_status
 
-    return get_models_status()
+    status = get_models_status()
+    status["generative_removal"] = _generative_removal_status()
+    return status
+
+
+@app.get("/api/removal/generative-status")
+def api_removal_generative_status():
+    """Whether Best Quality object removal can actually reach PowerPaint / SDXL here."""
+    return _generative_removal_status()
 
 
 @app.get("/api/models/download-progress")

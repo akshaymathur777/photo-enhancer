@@ -5,6 +5,7 @@ import {
   HardDrive,
   Loader2,
   RefreshCw,
+  Sparkles,
   X,
   XCircle,
 } from "lucide-react";
@@ -13,6 +14,7 @@ import {
   DownloadProgress,
   fetchDownloadProgress,
   fetchModelsStatus,
+  GenerativeRemovalStatus,
   ModelsStatus,
   startDownloadAll,
   startDownloadModel,
@@ -46,6 +48,70 @@ function statusIcon(status: string) {
   if (status === "downloading") return <Loader2 className="w-4 h-4 text-accent animate-spin shrink-0" />;
   if (status === "error") return <XCircle className="w-4 h-4 text-red-400 shrink-0" />;
   return <Circle className="w-4 h-4 text-gray-600 shrink-0" />;
+}
+
+function BestQualityRemovalCard({
+  generative,
+  canDownload,
+  onDownload,
+}: {
+  generative: GenerativeRemovalStatus;
+  canDownload: boolean;
+  onDownload: (modelId: string) => void;
+}) {
+  const missing = generative.models.filter((m) => !m.present);
+  const headline = !generative.cuda
+    ? "Best Quality object removal is unavailable on this PC"
+    : generative.ready
+      ? "Best Quality object removal is ready"
+      : missing.length === generative.models.length
+        ? "Best Quality object removal is not enabled yet"
+        : "Best Quality object removal is partly enabled";
+  const detail = !generative.cuda
+    ? "The generative erase needs an NVIDIA GPU (CUDA). Removals fall back to the classical LaMa / PatchMatch fill, which is still a good result on many scenes."
+    : generative.ready
+      ? "Water and sky scenes route to SDXL inpaint, indoor and structured scenes to PowerPaint erase."
+      : "Without these weights, Best Quality falls back to the classical LaMa / PatchMatch fill — no mid-edit download is started. Balanced and Fast always use the classical fill on water and indoor scenes.";
+  const tone = generative.ready
+    ? "border-emerald-500/20 bg-emerald-500/10"
+    : "border-amber-500/25 bg-amber-500/10";
+  const headlineTone = generative.ready ? "text-emerald-300" : "text-amber-300";
+
+  return (
+    <div className={`rounded-lg border px-3 py-2.5 space-y-2 ${tone}`}>
+      <div className="flex items-start gap-2">
+        <Sparkles className={`w-4 h-4 shrink-0 mt-0.5 ${headlineTone}`} />
+        <div className="space-y-1">
+          <p className={`text-sm font-medium ${headlineTone}`}>{headline}</p>
+          <p className="text-xs text-gray-400 leading-relaxed">{detail}</p>
+        </div>
+      </div>
+      <ul className="space-y-1">
+        {generative.models.map((m) => (
+          <li key={m.id} className="flex items-center gap-2 text-xs">
+            {m.present ? (
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            ) : (
+              <Circle className="w-3.5 h-3.5 text-gray-600 shrink-0" />
+            )}
+            <span className="text-gray-300 truncate">{m.name}</span>
+            <span className="text-gray-500 shrink-0">
+              {m.scenes} · ~{(m.size_estimate_mb / 1000).toFixed(1)} GB
+            </span>
+            {!m.present && canDownload && (
+              <button
+                type="button"
+                onClick={() => onDownload(m.id)}
+                className="ml-auto text-accent hover:text-accent-hover shrink-0"
+              >
+                Download
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 interface ModelDownloadPanelProps {
@@ -150,7 +216,11 @@ export function ModelDownloadPanel({ mode, onClose }: ModelDownloadPanelProps) {
                   After that, everything works offline — your photos never leave your device.
                 </>
               ) : (
-                <>Models download once, then work offline. Stored in your local app data folder.</>
+                <>
+                  Models download once, then work offline. Stored in your local app data folder.
+                  Object removal works without the large weights below — they only change what
+                  Best Quality can reach.
+                </>
               )}
             </p>
           </div>
@@ -230,6 +300,14 @@ export function ModelDownloadPanel({ mode, onClose }: ModelDownloadPanelProps) {
                 <div className="rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 px-3 py-2 text-sm">
                   {actionError}
                 </div>
+              )}
+
+              {status?.generative_removal && (
+                <BestQualityRemovalCard
+                  generative={status.generative_removal}
+                  canDownload={progress?.status !== "downloading" && !isOnboarding}
+                  onDownload={(id) => void startDownloadModel(id).then(refresh)}
+                />
               )}
 
               {/* Disk usage */}
