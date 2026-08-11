@@ -13,6 +13,7 @@ export interface RemovalResult {
   blob: Blob;
   engine: string;
   scene: string;
+  postfill: string;
 }
 
 async function parseRemovalResponse(res: Response): Promise<RemovalResult> {
@@ -25,6 +26,7 @@ async function parseRemovalResponse(res: Response): Promise<RemovalResult> {
     blob,
     engine: res.headers.get("X-Inpaint-Engine") ?? "unknown",
     scene: res.headers.get("X-Inpaint-Scene") ?? "generic",
+    postfill: res.headers.get("X-Inpaint-Postfill") ?? "none",
   };
 }
 

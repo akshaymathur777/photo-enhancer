@@ -130,7 +130,7 @@ function generativeHint(
     return {
       tone: "ready",
       badge: "PowerPaint + SDXL ready",
-      text: "Best Quality runs a Quick preview then the CUDA erase (PowerPaint for indoor, SDXL for water). Remove one person at a time for clean fills.",
+      text: "Best Quality runs a Quick preview then the CUDA erase (PowerPaint for indoor, SDXL for water). The generative fill keeps the hole — classical post-fill only runs on Fast/Balanced or if erase falls back.",
     };
   }
   if (!generative.cuda) {

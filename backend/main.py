@@ -761,7 +761,8 @@ def _removal_response(result: Image.Image) -> Response:
     headers = {
         "X-Inpaint-Engine": str(meta.get("engine", "unknown")),
         "X-Inpaint-Scene": str(meta.get("scene", "generic")),
-        "Access-Control-Expose-Headers": "X-Inpaint-Engine, X-Inpaint-Scene",
+        "X-Inpaint-Postfill": str(meta.get("postfill", "none")),
+        "Access-Control-Expose-Headers": "X-Inpaint-Engine, X-Inpaint-Scene, X-Inpaint-Postfill",
     }
     return Response(
         content=image_to_bytes(result, "JPEG"),
