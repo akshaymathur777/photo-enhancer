@@ -1064,6 +1064,10 @@ class GenerativeRemoveBackend(InpaintBackend):
         except Exception:
             pass
         try:
+            from services.model_download import _sd_inpaint_present
+
+            if not _sd_inpaint_present():
+                raise InpaintError("SD1.5 inpaint weights missing or incomplete")
             self.engine = "sd15"
             return inpaint_patch_sd(rgb, mask)
         except InpaintError:
@@ -1113,11 +1117,28 @@ class AiRemoveBackend(InpaintBackend):
                     pass
 
         try:
+            from services.model_download import _sd_inpaint_present
+
+            if not _sd_inpaint_present():
+                raise InpaintError("SD1.5 inpaint weights missing or incomplete")
             self.engine = "sd15"
             return inpaint_patch_sd(rgb, mask)
         except Exception as sd15_exc:
             if gen_exc is None:
                 gen_exc = sd15_exc
+            # Fail fast into LaMa — do not keep loading multi-GB pipes after OOM.
+            try:
+                _release_sdxl_pipe()
+            except Exception:
+                pass
+            try:
+                _release_powerpaint_pipe()
+            except Exception:
+                pass
+            try:
+                _release_sd_pipe()
+            except Exception:
+                pass
             try:
                 out = inpaint_patch_torch(rgb, mask)
                 self.is_generative = False

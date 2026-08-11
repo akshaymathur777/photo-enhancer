@@ -29,7 +29,7 @@ build.bat
 
 Output: `dist\PhotoEnhancer\PhotoEnhancer.exe`
 
-Models are **not** bundled — they download once to `%APPDATA%\PhotoEnhancer\models\` (PowerPaint ~4.5 GB, SDXL ~7 GB, LaMa, SAM/YOLO, BiRefNet, Real-ESRGAN).
+Models are **not** bundled — they download once to `%APPDATA%\PhotoEnhancer\models\` (PowerPaint ~6 GB, SDXL ~6.5 GB, LaMa, SAM/YOLO, BiRefNet, Real-ESRGAN).
 
 ## Models panel
 

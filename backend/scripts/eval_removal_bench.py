@@ -30,6 +30,7 @@ configure_runtime_paths()
 
 from services.object_removal import (  # noqa: E402
     auto_detect_others_mask,
+    get_last_removal_meta,
     inpaint_objects,
     mask_overlay_preview,
     segment_from_points,
@@ -82,6 +83,8 @@ class CaseResult:
     pass_plaque: bool
     pass_protect: bool
     pass_case: bool
+    engine: str | None = None
+    postfill: str | None = None
     perceptual_backend: str | None = None
     perceptual_reason: str | None = None
     perceptual_patch_px: int | None = None
@@ -237,6 +240,9 @@ def run_case(
     )  # type: ignore[arg-type]
     t_inp = time.time() - t1
     result.save(case_dir / "after.jpg", quality=92)
+    meta = get_last_removal_meta() or {}
+    engine = str(meta.get("engine") or "") or None
+    postfill = str(meta.get("postfill") or "") or None
 
     orig = _pil_to_rgb_array(im)
     after = _pil_to_rgb_array(result)
@@ -298,6 +304,8 @@ def run_case(
         pass_plaque=pass_plaque,
         pass_protect=pass_protect,
         pass_case=pass_case,
+        engine=engine,
+        postfill=postfill,
         perceptual_backend=perc.backend,
         perceptual_reason=perc.reason,
         perceptual_patch_px=perc.patch_px,
@@ -315,7 +323,8 @@ def run_case(
     else:
         perc_txt = f"perc={perc.context_score:.2f} blur={perc.blur_ratio:.2f}"
     print(
-        f"[{status}] {name} ghost={ghost:.1f}% plaque={plaque:.3f} protect={protect:.1f} "
+        f"[{status}] {name} engine={engine or '-'} postfill={postfill or '-'} "
+        f"ghost={ghost:.1f}% plaque={plaque:.3f} protect={protect:.1f} "
         f"mad={mad:.1f} cov={hard.mean()*100:.2f}% {perc_txt} total={t_seg+t_inp:.1f}s",
         flush=True,
     )

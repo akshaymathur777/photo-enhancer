@@ -104,7 +104,16 @@ POWERPAINT_REPO = "Sanster/PowerPaint-V1-stable-diffusion-inpainting"
 
 
 def _sd_inpaint_present() -> bool:
-    return (_sd_inpaint_dir() / "model_index.json").is_file()
+    """Require a real UNet weight file — model_index.json alone is a broken download."""
+    d = _sd_inpaint_dir()
+    if not (d / "model_index.json").is_file():
+        return False
+    unet = d / "unet"
+    return (
+        (unet / "diffusion_pytorch_model.safetensors").is_file()
+        or (unet / "diffusion_pytorch_model.fp16.safetensors").is_file()
+        or (unet / "diffusion_pytorch_model.bin").is_file()
+    )
 
 
 def _sdxl_inpaint_present() -> bool:
@@ -409,7 +418,7 @@ def _build_registry() -> list[ModelEntry]:
         ModelEntry(
             id="powerpaint",
             name="PowerPaint V1 (AI Remove / object erase)",
-            size_estimate_mb=4500,
+            size_estimate_mb=6100,
             feature="Object removal (dedicated erase, CUDA)",
             present_fn=_powerpaint_present,
             download_fn=lambda: _download_powerpaint(),
@@ -417,7 +426,7 @@ def _build_registry() -> list[ModelEntry]:
         ModelEntry(
             id="sdxl_inpaint",
             name="SDXL Inpaint (AI Remove fallback)",
-            size_estimate_mb=7000,
+            size_estimate_mb=6600,
             feature="Object removal (generative AI, CUDA)",
             present_fn=_sdxl_inpaint_present,
             download_fn=lambda: _download_sdxl_inpaint(),
@@ -883,7 +892,7 @@ def _download_sdxl_inpaint() -> None:
         bytes_total=0,
         percent=0.0,
         message=(
-            "Downloading SDXL Inpaint (~7 GB, photoreal). NVIDIA CUDA required for Best Quality; "
+            "Downloading SDXL Inpaint (~6.5 GB, photoreal). NVIDIA CUDA required for Best Quality; "
             "falls back to SD1.5 / LaMa if unavailable."
         ),
     )
@@ -920,7 +929,7 @@ def _download_sdxl_inpaint() -> None:
     dest.mkdir(parents=True, exist_ok=True)
     _set_progress(
         message=(
-            "Juggernaut unavailable — downloading official SDXL Inpaint (~7 GB)…"
+            "Juggernaut unavailable — downloading official SDXL Inpaint (~6.5 GB)…"
         ),
     )
     _log(logging.INFO, f"Falling back to HuggingFace snapshot: {SDXL_INPAINT_REPO} -> {dest}")
@@ -954,7 +963,7 @@ def _download_sdxl_inpaint() -> None:
 
 
 def ensure_sdxl_inpaint() -> Path:
-    """SDXL Inpainting (~7 GB) for generative AI Remove / Best Quality on CUDA."""
+    """SDXL Inpainting (~6.5 GB) for generative AI Remove / Best Quality on CUDA."""
     _models_dir().mkdir(parents=True, exist_ok=True)
     if not _sdxl_inpaint_present():
         _track_on_demand(
@@ -972,7 +981,7 @@ def _download_powerpaint() -> None:
     dest.mkdir(parents=True, exist_ok=True)
     _update_model_status("powerpaint", "downloading")
     _set_progress(
-        message="Downloading PowerPaint V1 object-erase (~4.5 GB)…",
+        message="Downloading PowerPaint V1 object-erase (~6 GB)…",
     )
     _log(logging.INFO, f"Downloading HuggingFace snapshot: {POWERPAINT_REPO} -> {dest}")
     last_exc: Exception | None = None
@@ -1015,7 +1024,7 @@ def _download_powerpaint() -> None:
 
 
 def ensure_powerpaint() -> Path:
-    """PowerPaint V1 — dedicated object-removal inpaint (~4.5 GB, CUDA)."""
+    """PowerPaint V1 — dedicated object-removal inpaint (~6 GB, CUDA)."""
     _models_dir().mkdir(parents=True, exist_ok=True)
     if not _powerpaint_present():
         _track_on_demand(
