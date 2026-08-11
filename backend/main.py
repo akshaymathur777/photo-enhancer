@@ -17,6 +17,7 @@ from services.ai_modes import (
     normalize_mode,
     resolve_bg_model,
     resolve_inpaint_mode,
+    resolve_removal_quality,
 )
 from services.ai_styles import apply_style, list_styles, normalize_style
 from services.image_io import open_image_bytes
@@ -51,10 +52,13 @@ from services.chat_agent import (
     result_to_base64,
 )
 from services.object_removal import (
+    auto_detect_others_mask,
     auto_detect_people_mask,
+    get_last_removal_meta,
     inpaint_objects,
     mask_overlay_preview,
     segment_from_points,
+    warm_removal_models,
 )
 from services.settings import get_max_output_mp, get_settings_payload, set_max_output_mp_from_megapixels
 from services.upscale_limits import max_allowed_scale, validate_max_output_mp
@@ -103,6 +107,15 @@ async def _load_image(file: UploadFile) -> Image.Image:
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/api/warm-models")
+def api_warm_models():
+    """Load SAM/YOLO/inpaint engines into GPU memory for snappier interactive remove."""
+    try:
+        return warm_removal_models()
+    except Exception as exc:
+        raise _processing_error(exc) from exc
 
 
 @app.get("/api/models/status")
@@ -171,7 +184,11 @@ def list_models():
         "tools": [
             {"id": "remove-bg", "name": "Remove Background", "model": "BiRefNet Massive"},
             {"id": "replace-bg", "name": "Replace Background", "model": "BiRefNet Massive"},
-            {"id": "remove-objects", "name": "Remove Objects", "model": "SAM 2.1 + LaMa AI/Quick"},
+            {
+                "id": "remove-objects",
+                "name": "Remove Objects",
+                "model": "SAM 2.1 + PowerPaint/SDXL erase (CUDA Best) / LaMa Quick",
+            },
             {"id": "ai-styles", "name": "AI Styles", "model": "Creative presets"},
             {"id": "auto-enhance", "name": "Auto Enhance"},
             {"id": "adjust", "name": "Adjust (brightness/contrast/saturation)"},
@@ -698,6 +715,20 @@ async def api_auto_segment_people(
     return Response(content=image_to_bytes(mask, "PNG"), media_type="image/png")
 
 
+def _removal_response(result: Image.Image) -> Response:
+    meta = get_last_removal_meta()
+    headers = {
+        "X-Inpaint-Engine": str(meta.get("engine", "unknown")),
+        "X-Inpaint-Scene": str(meta.get("scene", "generic")),
+        "Access-Control-Expose-Headers": "X-Inpaint-Engine, X-Inpaint-Scene",
+    }
+    return Response(
+        content=image_to_bytes(result, "JPEG"),
+        media_type="image/jpeg",
+        headers=headers,
+    )
+
+
 @app.post("/api/auto-remove-people")
 async def api_auto_remove_people(
     file: UploadFile = File(...),
@@ -708,6 +739,7 @@ async def api_auto_remove_people(
     """Detect all people, build a mask, and inpaint them away in one step."""
     image = await _load_image(file)
     removal = resolve_inpaint_mode(normalize_mode(mode), inpaint_mode)
+    quality = resolve_removal_quality(normalize_mode(mode))
     softness = max(0.5, min(float(edge_softness), 2.0))
 
     try:
@@ -719,10 +751,57 @@ async def api_auto_remove_people(
         raise HTTPException(400, "No people detected in this image")
 
     try:
-        result = inpaint_objects(image, mask, mode=removal, edge_softness=softness)
+        result = inpaint_objects(
+            image, mask, mode=removal, edge_softness=softness, quality=quality
+        )
     except Exception as exc:
         raise _processing_error(exc) from exc
-    return Response(content=image_to_bytes(result, "JPEG"), media_type="image/jpeg")
+    return _removal_response(result)
+
+
+@app.post("/api/auto-remove-others")
+async def api_auto_remove_others(
+    file: UploadFile = File(...),
+    mode: str = Form("balanced"),
+    inpaint_mode: str = Form(None),
+    edge_softness: float = Form(1.0),
+    lock_x: float | None = Form(None),
+    lock_y: float | None = Form(None),
+    preview: bool = Form(False),
+):
+    """Remove bystanders — all people except the locked / largest subject."""
+    image = await _load_image(file)
+    removal = resolve_inpaint_mode(normalize_mode(mode), inpaint_mode)
+    quality = resolve_removal_quality(normalize_mode(mode))
+    softness = max(0.5, min(float(edge_softness), 2.0))
+    lock_point = None
+    if lock_x is not None and lock_y is not None:
+        lock_point = (float(lock_x), float(lock_y))
+
+    try:
+        mask = auto_detect_others_mask(image, lock_point=lock_point)
+    except Exception as exc:
+        raise _processing_error(exc) from exc
+
+    if not mask.getbbox():
+        raise HTTPException(400, "No other people detected (or only one person in frame)")
+
+    if preview:
+        result = mask_overlay_preview(image, mask)
+        return Response(content=image_to_bytes(result, "JPEG"), media_type="image/jpeg")
+
+    try:
+        result = inpaint_objects(
+            image,
+            mask,
+            mode=removal,
+            edge_softness=softness,
+            quality=quality,
+            lock_point=lock_point,
+        )
+    except Exception as exc:
+        raise _processing_error(exc) from exc
+    return _removal_response(result)
 
 
 @app.post("/api/remove-objects")
@@ -734,6 +813,8 @@ async def api_remove_objects(
     edge_softness: float = Form(1.0),
     mode: str = Form("balanced"),
     inpaint_mode: str = Form(None),
+    lock_x: float | None = Form(None),
+    lock_y: float | None = Form(None),
 ):
     """Remove selected objects via inpainting. Provide click points, brush mask, or mask file."""
     image = await _load_image(file)
@@ -757,11 +838,22 @@ async def api_remove_objects(
 
     softness = max(0.5, min(float(edge_softness), 2.0))
     removal = resolve_inpaint_mode(normalize_mode(mode), inpaint_mode)
+    quality = resolve_removal_quality(normalize_mode(mode))
+    lock_point = None
+    if lock_x is not None and lock_y is not None:
+        lock_point = (float(lock_x), float(lock_y))
     try:
-        result = inpaint_objects(image, mask, mode=removal, edge_softness=softness)
+        result = inpaint_objects(
+            image,
+            mask,
+            mode=removal,
+            edge_softness=softness,
+            quality=quality,
+            lock_point=lock_point,
+        )
     except Exception as exc:
         raise _processing_error(exc) from exc
-    return Response(content=image_to_bytes(result, "JPEG"), media_type="image/jpeg")
+    return _removal_response(result)
 
 
 @app.get("/{full_path:path}")

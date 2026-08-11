@@ -100,18 +100,35 @@ def crop_rotate(
 
 
 def auto_enhance(image: Image.Image, strength: float = 1.0) -> Image.Image:
+    """One-tap polish tuned for phone JPEGs: exposure + local contrast, not slider piles."""
     rgb = image.convert("RGB")
     s = max(0.1, min(2.0, strength))
+    arr = np.array(rgb)
 
-    contrast = ImageEnhance.Contrast(rgb).enhance(1.0 + 0.15 * s)
-    color = ImageEnhance.Color(contrast).enhance(1.0 + 0.1 * s)
-    sharp = ImageEnhance.Sharpness(color).enhance(1.0 + 0.2 * s)
-    bright = ImageEnhance.Brightness(sharp).enhance(1.0 + 0.05 * s)
+    # Mild CLAHE on L channel — lifts shadowed phone shots without HDR halos.
+    lab = cv2.cvtColor(arr, cv2.COLOR_RGB2LAB)
+    l, a, b = cv2.split(lab)
+    clip = 1.4 + 0.9 * s
+    clahe = cv2.createCLAHE(clipLimit=float(clip), tileGridSize=(8, 8))
+    l2 = clahe.apply(l)
+    # Blend so strong strength doesn't crush skin tones.
+    mix = 0.35 + 0.25 * min(s, 1.2)
+    l_out = cv2.addWeighted(l2, mix, l, 1.0 - mix, 0)
+    enhanced = cv2.cvtColor(cv2.merge([l_out, a, b]), cv2.COLOR_LAB2RGB)
+
+    # Unsharp local contrast (frequency separation lite).
+    blur = cv2.GaussianBlur(enhanced, (0, 0), 1.2)
+    detail = cv2.addWeighted(enhanced, 1.0 + 0.35 * s, blur, -0.35 * s, 0)
+    result = Image.fromarray(np.clip(detail, 0, 255).astype(np.uint8))
+
+    result = ImageEnhance.Color(result).enhance(1.0 + 0.08 * s)
+    result = ImageEnhance.Brightness(result).enhance(1.0 + 0.03 * s)
+    result = ImageEnhance.Sharpness(result).enhance(1.0 + 0.12 * s)
 
     if image.mode == "RGBA":
-        bright = bright.convert("RGBA")
-        bright.putalpha(image.split()[3])
-    return bright
+        result = result.convert("RGBA")
+        result.putalpha(image.split()[3])
+    return result
 
 
 def adjust_image(

@@ -60,15 +60,27 @@ def _center_fallback_mask(image: Image.Image) -> np.ndarray:
     return np.clip(1.0 - (dist / max_d) ** 2, 0, 1).astype(np.float32)
 
 
+def _frequency_skin_smooth(arr: np.ndarray, mask: np.ndarray, strength: float) -> np.ndarray:
+    """Gentle frequency separation: blur low-freq skin, keep high-freq pores/edges."""
+    s = max(0.05, min(1.0, strength))
+    base = cv2.bilateralFilter(arr, d=9, sigmaColor=45, sigmaSpace=45)
+    # Extra soft low-frequency layer
+    low = cv2.GaussianBlur(base, (0, 0), 3.5)
+    high = arr.astype(np.float32) - low.astype(np.float32)
+    # Slightly compress high-freq blemishes without plastic blur
+    high_damped = high * (1.0 - 0.35 * s)
+    rebuilt = np.clip(low.astype(np.float32) + high_damped, 0, 255)
+    blend = (mask * s)[:, :, None]
+    return (rebuilt * blend + arr.astype(np.float32) * (1.0 - blend)).astype(np.uint8)
+
+
 def skin_smooth(image: Image.Image, strength: float = 0.6) -> Image.Image:
     s = max(0.1, min(1.0, strength))
     arr = np.array(image.convert("RGB"))
-    smooth = cv2.bilateralFilter(arr, d=9, sigmaColor=50, sigmaSpace=50)
     mask = _face_mask(image)
     if mask is None:
         mask = _center_fallback_mask(image)
-    blend = mask[:, :, None] * s
-    out = (smooth.astype(np.float32) * blend + arr.astype(np.float32) * (1 - blend)).astype(np.uint8)
+    out = _frequency_skin_smooth(arr, mask, s)
     result = Image.fromarray(out)
     if image.mode == "RGBA":
         result = result.convert("RGBA")
@@ -78,8 +90,10 @@ def skin_smooth(image: Image.Image, strength: float = 0.6) -> Image.Image:
 
 def portrait_magic(image: Image.Image, strength: float = 1.0) -> Image.Image:
     s = max(0.2, min(2.0, strength))
-    result = auto_enhance(image, strength=0.9 * s)
-    result = skin_smooth(result, strength=0.45 * s)
+    result = auto_enhance(image, strength=0.85 * s)
+    result = skin_smooth(result, strength=0.40 * s)
+    # Soft teeth lift only inside face mask (avoid global HSV wash).
+    result = whiten_teeth(result, strength=0.25 * min(s, 1.2))
     result = apply_style(result, "portrait")
     return result
 

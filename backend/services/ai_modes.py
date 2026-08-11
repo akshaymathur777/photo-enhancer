@@ -8,9 +8,14 @@ AI_MODES: dict[str, dict[str, Any]] = {
     "best_quality": {
         "id": "best_quality",
         "name": "Best Quality",
-        "description": "Heaviest models — generative SDXL remove (~7 GB, CUDA). Falls back to SD1.5 / LaMa.",
+        "description": (
+            "Best remove: scene-routed PowerPaint erase (indoor) + SDXL (water/sky) at 48 steps with "
+            "multi-seed and PatchMatch texture rescue — needs CUDA and those weights on disk, else the "
+            "classical LaMa / PatchMatch fill. Progressive Quick→Best preview in the editor."
+        ),
         "bg_model": "massive",
         "removal": "ai",
+        "removal_quality": "best",
         "upscale_max_scale": 4,
         "upscale_prefer": 4,
         "denoise_strength": 12,
@@ -19,9 +24,13 @@ AI_MODES: dict[str, dict[str, Any]] = {
     "balanced": {
         "id": "balanced",
         "name": "Balanced",
-        "description": "Default middle ground between speed and quality.",
+        "description": (
+            "AI Remove at 40 steps. Water and indoor scenes stay on the classical LaMa / PatchMatch "
+            "fill — only Best Quality routes them to PowerPaint / SDXL."
+        ),
         "bg_model": "general",
         "removal": "ai",
+        "removal_quality": "balanced",
         "upscale_max_scale": 4,
         "upscale_prefer": 2,
         "denoise_strength": 10,
@@ -30,9 +39,13 @@ AI_MODES: dict[str, dict[str, Any]] = {
     "fast": {
         "id": "fast",
         "name": "Fast",
-        "description": "Lite models and quicker inpainting.",
+        "description": (
+            "Quick Remove only — ONNX LaMa (~512px tiles). Honest speed path; lower fill quality. "
+            "Forcing AI Remove here runs short generative passes: 28 steps, single seed."
+        ),
         "bg_model": "lite",
         "removal": "quick",
+        "removal_quality": "fast",
         "upscale_max_scale": 2,
         "upscale_prefer": 2,
         "denoise_strength": 8,
@@ -84,6 +97,11 @@ def resolve_inpaint_mode(global_mode: str | None, explicit: str | None = None) -
     if preset == "quick":
         return "quick"
     return "ai"
+
+
+def resolve_removal_quality(global_mode: str | None) -> str:
+    """best | balanced | fast — drives SD steps / multi-seed / 2nd-pass aggressiveness."""
+    return str(get_mode_config(global_mode).get("removal_quality", "balanced"))
 
 
 def clamp_scale_for_mode(
