@@ -23,7 +23,13 @@ from services.scene_context import (
 _sam_predictor = None
 _yolo_seg = None
 _yolo_seg_name: str | None = None
-_last_removal_meta: dict = {"engine": "unknown", "scene": "generic", "mode": "ai"}
+_last_removal_meta: dict = {
+    "engine": "unknown",
+    "scene": "generic",
+    "mode": "ai",
+    "postfill": "none",
+}
+_GENERATIVE_ENGINES = frozenset({"sdxl", "powerpaint", "sd15"})
 _people_mask_cache: dict[tuple, np.ndarray] = {}
 _PEOPLE_MASK_CACHE_MAX = 8
 
@@ -31,6 +37,10 @@ _PEOPLE_MASK_CACHE_MAX = 8
 def get_last_removal_meta() -> dict:
     """Engine/scene used by the most recent inpaint_objects call (for progress UI)."""
     return dict(_last_removal_meta)
+
+
+def _is_generative_engine(engine: str | None) -> bool:
+    return str(engine or "").lower() in _GENERATIVE_ENGINES
 
 
 def warm_removal_models() -> dict:
@@ -2190,6 +2200,7 @@ def _inpaint_once(
             "engine": "water_exemplar",
             "scene": crop_scene or "water",
             "mode": mode,
+            "postfill": "classical",
         }
         if crop_protect is not None and crop_protect.any():
             base_patch = base_patch.copy()
@@ -2262,43 +2273,21 @@ def _inpaint_once(
 
     # Re-read after inpaint — AiRemoveBackend clears is_generative on LaMa fallback.
     generative = bool(getattr(backend, "is_generative", False))
+    engine_name = str(getattr(backend, "engine", "classical" if mode == "quick" else "ai"))
+    # Best Quality paid for SDXL / PowerPaint — keep that fill. Classical
+    # exemplar/PatchMatch used to hard-overwrite every hole pixel afterward,
+    # making shipped generative output byte-identical to classical.
+    postfill = "seam_only" if generative else "classical"
     _last_removal_meta = {
-        "engine": str(getattr(backend, "engine", "classical" if mode == "quick" else "ai")),
+        "engine": engine_name,
         "scene": crop_scene,
         "mode": mode,
+        "postfill": postfill,
     }
 
-    # Scene-aware post-fill (Quick + AI). Structured/water → PatchMatch-first.
-    if generative:
-        engine = getattr(backend, "engine", "")
-        if open_bg:
-            # Water/sky: classical exemplar is authoritative. SD often leaves a grey
-            # person-shaped plaque whose injected HF fools the soft-plaque detector.
-            inpainted_crop = fill_for_scene(
-                crop_rgb, inpainted_crop, crop_hard, scene=crop_scene or "water"
-            )
-            inpainted_crop = _match_fill_to_context(crop_rgb, inpainted_crop, crop_hard)
-            from services.scene_context import _match_fill_hf_to_ring
-
-            inpainted_crop = _match_fill_hf_to_ring(
-                crop_rgb, inpainted_crop, crop_hard > 127, target_ratio=0.90, max_gain=2.6
-            )
-        elif crop_scene == "structured":
-            inpainted_crop = fill_for_scene(
-                crop_rgb, inpainted_crop, crop_hard, scene="structured"
-            )
-            inpainted_crop = _match_fill_to_context(crop_rgb, inpainted_crop, crop_hard)
-            from services.scene_context import _match_fill_hf_to_ring
-
-            inpainted_crop = _match_fill_hf_to_ring(
-                crop_rgb, inpainted_crop, crop_hard > 127, target_ratio=0.65, max_gain=1.15
-            )
-        else:
-            inpainted_crop = _inject_context_texture(
-                crop_rgb, inpainted_crop, crop_hard, scene=crop_scene
-            )
-            inpainted_crop = _match_fill_to_context(crop_rgb, inpainted_crop, crop_hard)
-    else:
+    # Scene-aware post-fill. Classical paths still own the hole; generative keeps
+    # its interior and only gets seam polish below.
+    if not generative:
         # Context fill / water clone must sample the real photo, not the scrubbed copy.
         inpainted_crop = _hybrid_context_fill(
             crop_rgb, inpainted_crop, crop_hard, scene=crop_scene
@@ -2340,6 +2329,15 @@ def _inpaint_once(
         base_patch.astype(np.float32) * blend[:, :, None]
         + crop_rgb.astype(np.float32) * (1.0 - blend[:, :, None])
     ).astype(np.uint8)
+
+    # Generative owns the hard hole — never leave feathered original person pixels.
+    if generative:
+        hard_core = crop_hard > 127
+        if crop_protect is not None and crop_protect.any():
+            hard_core = hard_core & (~crop_protect)
+        patch = patch.copy()
+        patch[hard_core] = base_patch[hard_core]
+
     if not generative and not open_bg:
         if crop_protect is None or not crop_protect.any():
             patch = _smooth_transition_band(patch, crop_rgb, blend)
@@ -2359,8 +2357,27 @@ def _inpaint_once(
     if mode == "ai" and not generative and not textured_bg and not open_bg:
         patch = _ai_edge_polish(patch, crop_rgb, crop_hard, blend)
 
-    # Match edge-band luminance to surrounding ring (harder seams on water/floors).
-    patch = _match_edge_band_luminance(crop_rgb, patch, blend_hard, protect=crop_protect)
+    # Seam polish: match the feather band. Generative hard_core stays authoritative.
+    if generative:
+        import cv2
+
+        hard_core = crop_hard > 127
+        if crop_protect is not None and crop_protect.any():
+            hard_core = hard_core & (~crop_protect)
+        eroded = cv2.erode(
+            hard_core.astype(np.uint8),
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)),
+        ).astype(bool)
+        seam_patch = _match_edge_band_luminance(
+            crop_rgb, patch, blend_hard, protect=crop_protect
+        )
+        patch = patch.copy()
+        patch[~eroded] = seam_patch[~eroded]
+        patch[hard_core & eroded] = base_patch[hard_core & eroded]
+        if crop_protect is not None and crop_protect.any():
+            patch[crop_protect] = crop_rgb[crop_protect]
+    else:
+        patch = _match_edge_band_luminance(crop_rgb, patch, blend_hard, protect=crop_protect)
 
     result = rgb.copy()
     result[y0:y1, x0:x1] = patch
@@ -2415,7 +2432,12 @@ def inpaint_objects(
     hard_mask = _erode_hard_near_protect(hard_mask, protect, raw=raw)
 
     scene = classify_hole_scene(rgb, hard_mask > 127)
-    _last_removal_meta = {"engine": "pending", "scene": scene, "mode": mode}
+    _last_removal_meta = {
+        "engine": "pending",
+        "scene": scene,
+        "mode": mode,
+        "postfill": "none",
+    }
     # On water/sky, grow the hole a bit more so hair fringes don't leave a cutout plaque.
     # Never grow into protect (hair-safe); use a thinner grow than before.
     if scene_is_open_fill(scene) or _is_water_or_sky_ring(rgb, hard_mask > 127):
@@ -2491,15 +2513,15 @@ def inpaint_objects(
     else:
         result = _inpaint_once(rgb, hard_mask, mode=mode, edge_softness=edge_softness, protect=protect)
 
-    # Second pass: expand into leftover silhouette / hair ghost and re-fill.
-    # On water/sky, catch soft generative plaques with a texture rescue (no 2nd SD).
-    # Best quality: also run residual ghost pass on non-open scenes.
+    # Second pass: classical residual cleanup — skip hard hole overwrite when a
+    # generative engine already owns the fill. Soft-plaque rescue still runs when
+    # the plaque detector fires (it replaces washed generative water only then).
     open_bg = scene_is_open_fill(scene) or _is_water_or_sky_ring(rgb, hard_mask > 127)
+    gen_kept = _is_generative_engine(_last_removal_meta.get("engine"))
     if open_bg:
         residual = _soft_plaque_residual_mask(rgb, result, hard_mask, protect=protect)
         if residual is not None:
-            # Classical water synthesis is authoritative for soft plaques.
-            # HARD replace the hole — never soft-blend a generative plaque overlay.
+            # Soft-plaque detector fired — classical water synthesis rescues washed fills.
             rescued = _rescue_soft_generative_water(rgb, result, residual)
             rescued = fill_for_scene(rgb, rescued, residual, scene="water")
             rescued = _match_fill_to_context(rgb, rescued, residual)
@@ -2510,28 +2532,34 @@ def inpaint_objects(
             out[hard_r] = rescued[hard_r]
             result = out
             result = _match_edge_band_luminance(rgb, result, residual, protect=protect)
-        # Always HF-match water fills to ring (Best and Quick).
-        from services.scene_context import _match_fill_hf_to_ring
+            _last_removal_meta = {
+                **_last_removal_meta,
+                "postfill": "plaque_rescue",
+            }
+        if not gen_kept:
+            # Classical path: HF-match + ghost exemplar overwrite of the hole.
+            from services.scene_context import _match_fill_hf_to_ring
 
-        polished = _match_fill_hf_to_ring(rgb, result, hard_mask > 127, target_ratio=0.95)
-        hard_b = hard_mask > 127
-        if protect is not None and protect.any():
-            hard_b = hard_b & (~protect)
-        out = result.copy()
-        out[hard_b] = polished[hard_b]
-        result = out
-        # Ghost / face / sunglasses residual — ALWAYS hard exemplar overwrite
-        # (previously gated on soft-plaque, so textured grey ghosts were skipped).
-        ghost = _residual_ghost_mask(rgb, result, hard_mask, protect=protect)
-        if ghost is not None:
-            result = _hard_exemplar_overwrite(rgb, result, ghost, protect=protect, scene="water")
-        # Low MAD / high ghost → expand mask and pure-exemplar re-fill.
-        result = _ghost_mad_expand_refill(rgb, result, hard_mask, protect=protect)
-        # Final hard pass on any remaining face-like pixels inside the hole.
-        ghost2 = _residual_ghost_mask(rgb, result, hard_mask, protect=protect)
-        if ghost2 is not None:
-            result = _hard_exemplar_overwrite(rgb, result, ghost2, protect=protect, scene="water")
-    elif mode == "ai":
+            polished = _match_fill_hf_to_ring(rgb, result, hard_mask > 127, target_ratio=0.95)
+            hard_b = hard_mask > 127
+            if protect is not None and protect.any():
+                hard_b = hard_b & (~protect)
+            out = result.copy()
+            out[hard_b] = polished[hard_b]
+            result = out
+            ghost = _residual_ghost_mask(rgb, result, hard_mask, protect=protect)
+            if ghost is not None:
+                result = _hard_exemplar_overwrite(rgb, result, ghost, protect=protect, scene="water")
+            result = _ghost_mad_expand_refill(rgb, result, hard_mask, protect=protect)
+            ghost2 = _residual_ghost_mask(rgb, result, hard_mask, protect=protect)
+            if ghost2 is not None:
+                result = _hard_exemplar_overwrite(rgb, result, ghost2, protect=protect, scene="water")
+        elif protect is not None and protect.any():
+            # Generative kept: still never leave paint on locked people.
+            out = result.copy()
+            out[protect] = rgb[protect]
+            result = out
+    elif mode == "ai" and not gen_kept:
         residual = _residual_ghost_mask(rgb, result, hard_mask, protect=protect)
         if residual is not None:
             # Structured: PatchMatch residual, not another SDXL mega-pass.
@@ -2559,6 +2587,10 @@ def inpaint_objects(
             out = result.copy()
             out[hard_b] = polished[hard_b]
             result = out
+    elif mode == "ai" and gen_kept and protect is not None and protect.any():
+        out = result.copy()
+        out[protect] = rgb[protect]
+        result = out
 
     return Image.fromarray(result)
 
