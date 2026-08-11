@@ -85,8 +85,8 @@ const CATEGORIES: { id: CategoryId; label: string; tools: ToolDef[] }[] = [
     tools: [
       { id: "remove-bg", label: "Remove BG", desc: "BiRefNet Massive" },
       { id: "replace-bg", label: "Replace BG", desc: "Color, blur, image" },
-      { id: "remove-objects", label: "Remove Objects", desc: "SAM + LaMa" },
-      { id: "auto-enhance", label: "Auto Enhance", desc: "One-click polish" },
+      { id: "remove-objects", label: "Remove Objects", desc: "SAM + PowerPaint/SDXL" },
+      { id: "auto-enhance", label: "Auto Enhance", desc: "Phone JPEG polish" },
       { id: "adjust", label: "Adjust", desc: "Sliders" },
       { id: "denoise", label: "Denoise", desc: "Reduce noise" },
       { id: "sharpen", label: "Sharpen", desc: "Crisp details" },
@@ -101,9 +101,9 @@ const CATEGORIES: { id: CategoryId; label: string; tools: ToolDef[] }[] = [
 ];
 
 const MODES: { id: AiMode; label: string; desc: string }[] = [
-  { id: "best_quality", label: "Best Quality", desc: "SDXL generative remove; CUDA GPU" },
-  { id: "balanced", label: "Balanced", desc: "Default speed/quality" },
-  { id: "fast", label: "Fast", desc: "Lite models, quicker" },
+  { id: "best_quality", label: "Best Quality", desc: "CUDA erase + Quick→Best preview" },
+  { id: "balanced", label: "Balanced", desc: "AI Remove, fewer steps" },
+  { id: "fast", label: "Fast", desc: "Quick LaMa only" },
 ];
 
 const MODE_BG_MODEL: Record<AiMode, ToolOptions["model"]> = {

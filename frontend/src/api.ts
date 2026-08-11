@@ -442,6 +442,23 @@ export interface ModelInfo {
   status: "present" | "missing" | "downloading" | "error";
 }
 
+export interface GenerativeRemovalModel {
+  id: string;
+  name: string;
+  size_estimate_mb: number;
+  scenes: string;
+  present: boolean;
+}
+
+export interface GenerativeRemovalStatus {
+  cuda: boolean;
+  engine: string;
+  scenes: { water: boolean; structured: boolean };
+  ready: boolean;
+  models: GenerativeRemovalModel[];
+  missing_model_ids: string[];
+}
+
 export interface ModelsStatus {
   models: ModelInfo[];
   downloaded_count: number;
@@ -453,6 +470,7 @@ export interface ModelsStatus {
   models_dir: string;
   logs_dir?: string;
   download_in_progress: boolean;
+  generative_removal?: GenerativeRemovalStatus;
 }
 
 export type DownloadErrorKind = "network" | "permission" | "disk" | "ssl" | "unknown";
@@ -474,6 +492,12 @@ export async function fetchModelsStatus(): Promise<ModelsStatus> {
   const res = await fetch("/api/models/status");
   if (!res.ok) throw new Error(await parseApiError(res));
   return (await res.json()) as ModelsStatus;
+}
+
+export async function fetchGenerativeRemovalStatus(): Promise<GenerativeRemovalStatus> {
+  const res = await fetch("/api/removal/generative-status");
+  if (!res.ok) throw new Error(await parseApiError(res));
+  return (await res.json()) as GenerativeRemovalStatus;
 }
 
 export async function fetchDownloadProgress(): Promise<DownloadProgress> {

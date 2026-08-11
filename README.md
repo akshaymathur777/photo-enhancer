@@ -16,9 +16,9 @@ Placeholders above — replace with real captures (see [docs/screenshots/README.
 
 | Area | Highlights |
 |------|------------|
-| **Enhance** | BiRefNet / BRIA background removal, custom image backgrounds, SAM + LaMa object removal, Real-ESRGAN 2×/4× upscale |
+| **Enhance** | BiRefNet / BRIA background removal, SAM + local PowerPaint/SDXL/LaMa object removal, Real-ESRGAN 2×/4× upscale |
 | **Edit** | Compare slider, undo/redo, crop & rotate, bokeh, clone stamp, prism / vignette / grain, AI repair |
-| **Portrait** | Magic preset, face-aware skin smooth, red-eye, teeth whiten, simple hair tint & lip/blush |
+| **Portrait** | Magic preset, frequency-separation skin smooth, teeth whitening, simple hair tint & lip/blush |
 | **Looks** | 30 filter presets with thumbnail gallery |
 | **Batch** | Folder batch (auto enhance, portrait magic, photo restore) |
 | **AI Chat** | Rule-based (offline) → Ollama (offline) → OpenAI (opt-in cloud) |
@@ -198,6 +198,17 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports and PRs welcome.
 - Local-only processing for all image tools.
 - OpenAI is opt-in; images are only sent if you set `OPENAI_API_KEY`.
 - No hardcoded secrets in the repository — use `.env` (gitignored).
+
+## Object removal (local)
+
+- **Fast** = Quick LaMa (ONNX, ~512px tiles). If you switch the editor to AI Remove while on Fast, generative passes run cheap: 28 diffusion steps, single seed.
+- **Balanced** = AI Remove at 40 steps. On **water/sky and indoor/structured scenes it never reaches a generative engine** — those fills come from the classical LaMa / PatchMatch / exemplar path.
+- **Best Quality** = the only tier that routes those scenes generatively: **SDXL inpaint** for water/sky, **PowerPaint** erase for indoor/structured, at 48 steps with multi-seed selection, plus PatchMatch texture rescue.
+- Best Quality generative routing requires **CUDA and the weights already on disk** (PowerPaint ~4.5 GB, SDXL Inpaint ~7 GB). When they are missing, Best Quality uses the same classical fill instead of starting a multi-GB download mid-edit — the **Models** panel and the removal editor both say so up front.
+- Editor workflow: select **one person at a time**, optional **Lock subject** / **Remove others**, brush stroke undo/redo, and on Best Quality a **Quick→Best** progressive preview.
+- Eval harness: `backend/scripts/eval_removal_bench.py` (coastal + library gates). Scores write to `backend/scripts/_eval/`.
+
+**Honest quality bar:** this is a privacy-first local Windows editor. We do **not** claim Apple Photos Clean Up parity until coastal/library eval gates pass human review. Results vary by scene, GPU VRAM, and which models you have downloaded — on a CPU-only machine, or with the large inpaint weights missing, every tier ends up on the classical fill.
 
 ## What this is not
 

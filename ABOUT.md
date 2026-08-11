@@ -11,7 +11,7 @@ Not as a marketing slogan — I personally do not like sending family photos to 
 ## What's working
 
 - Background removal (multiple rembg models)
-- Object removal: SAM click-select, brush, auto-people, LaMa inpaint
+- Object removal: SAM click-select, brush, auto-people, LaMa inpaint — plus an optional CUDA-only generative erase (PowerPaint / SDXL) on the Best Quality tier, if you download those weights
 - Upscale (Real-ESRGAN), auto-enhance, 30+ AI style presets
 - Crop, bokeh, relight, AI repair, basic portrait tools
 - Undo/redo, before/after compare slider
@@ -20,7 +20,7 @@ Not as a marketing slogan — I personally do not like sending family photos to 
 
 ## What's limited or not planned (for now)
 
-- **Generative expand/replace** (text-prompt inpainting) — too heavy for CPU-first local use; not implemented
+- **Generative expand/replace** (text-prompt inpainting) — too heavy for CPU-first local use; not implemented. The only generative path is the object-removal erase, and it needs CUDA plus multi-GB weights, so most machines stay on the classical fill
 - **Studio-grade face/hair/makeup** — would need cloud models or much larger local weights; only simple local approximations today
 - **Video** — out of scope
 - **Perfect parity with commercial apps** — unrealistic for a side project; see [AIRBRUSH_PC_REPLICATION.md](AIRBRUSH_PC_REPLICATION.md) for an honest matrix
