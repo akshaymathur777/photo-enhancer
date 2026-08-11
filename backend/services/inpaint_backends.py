@@ -14,8 +14,10 @@ _lama_torch_model = None
 _lama_onnx_session = None
 _sd_pipe = None
 _sdxl_pipe = None
+_powerpaint_pipe = None
 
 # Object-removal prompts: synthesize plausible background, never people.
+# Prefer scene_context.scene_prompts() at runtime; these remain as fallbacks.
 _SD_REMOVE_PROMPT = (
     "high quality photograph, natural background continuation, seamless texture, "
     "photorealistic detail, consistent lighting, sharp focus"
@@ -34,6 +36,93 @@ _SD_WATER_NEGATIVE = (
     _SD_REMOVE_NEGATIVE
     + ", smooth blob, repeating pattern, stretched pixels, low-resolution patch"
 )
+
+# Threaded quality hint for generative passes (set by inpaint_objects).
+_quality_tier: str = "balanced"
+
+
+def set_removal_quality(tier: str | None) -> None:
+    """best → generative routing + more steps / multi-seed; balanced → default cost;
+    fast → classical engines and single-seed short generative passes."""
+    global _quality_tier
+    t = (tier or "balanced").strip().lower()
+    if t in ("best", "best_quality"):
+        _quality_tier = "best"
+    elif t in ("fast", "quick", "speed"):
+        _quality_tier = "fast"
+    else:
+        _quality_tier = "balanced"
+
+
+def get_removal_quality() -> str:
+    return _quality_tier
+
+
+def _tier_num_steps(fast: int, balanced: int, best: int) -> int:
+    tier = get_removal_quality()
+    if tier == "fast":
+        return fast
+    return best if tier == "best" else balanced
+
+
+def _tier_allows_multi_seed() -> bool:
+    return get_removal_quality() != "fast"
+
+
+def generative_engine_ready(scene: str | None = None) -> bool:
+    """CUDA plus downloaded weights for the engine the erase router would pick.
+
+    Mirrors _erase_engine_prefers_powerpaint so we never route a scene into a
+    backend whose weights are absent (that would kick off a multi-GB download).
+    """
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return False
+    except Exception:
+        return False
+    try:
+        from services.model_download import _powerpaint_present, _sdxl_inpaint_present
+    except Exception:
+        return False
+    name = _erase_engine_name()
+    if name in ("powerpaint", "ppt", "erase"):
+        return bool(_powerpaint_present())
+    if name in ("sdxl", "sd", "juggernaut"):
+        return bool(_sdxl_inpaint_present())
+    if scene is None:
+        return bool(_powerpaint_present() or _sdxl_inpaint_present())
+    if scene in ("structured", "generic", "vegetation"):
+        return bool(_powerpaint_present())
+    return bool(_sdxl_inpaint_present())
+
+
+def generative_removal_readiness() -> dict:
+    """Readiness of the Best Quality erase path, per scene family, for the UI."""
+    try:
+        import torch
+
+        cuda = bool(torch.cuda.is_available())
+    except Exception:
+        cuda = False
+    try:
+        from services.model_download import _powerpaint_present, _sdxl_inpaint_present
+
+        present = {
+            "powerpaint": bool(_powerpaint_present()),
+            "sdxl_inpaint": bool(_sdxl_inpaint_present()),
+        }
+    except Exception:
+        present = {"powerpaint": False, "sdxl_inpaint": False}
+    scenes = {scene: bool(generative_engine_ready(scene)) for scene in ("water", "structured")}
+    return {
+        "cuda": cuda,
+        "engine": _erase_engine_name(),
+        "scenes": scenes,
+        "ready": all(scenes.values()),
+        "models_present": present,
+    }
 
 
 class InpaintError(Exception):
@@ -193,8 +282,8 @@ def inpaint_patch_onnx_tiled(
             )
 
             py, px = np.mgrid[0:ph, 0:pw]
-            wy = np.minimum(py + 1, ph - py, overlap)
-            wx = np.minimum(px + 1, pw - px, overlap)
+            wy = np.minimum(np.minimum(py + 1, ph - py), overlap)
+            wx = np.minimum(np.minimum(px + 1, pw - px), overlap)
             weight = np.minimum(wy, wx).astype(np.float32)
 
             acc[y0:y1, x0:x1] += inpainted.astype(np.float32) * weight[:, :, None]
@@ -228,7 +317,7 @@ def inpaint_patch_opencv(
 
 
 def _release_sd_pipe() -> None:
-    """Free SD1.5 weights so SDXL can claim VRAM."""
+    """Free SD1.5 weights so SDXL / PowerPaint can claim VRAM."""
     global _sd_pipe
     if _sd_pipe is None:
         return
@@ -261,6 +350,23 @@ def _release_sdxl_pipe() -> None:
         _sdxl_pipe = None
 
 
+def _release_powerpaint_pipe() -> None:
+    """Free PowerPaint weights before loading SDXL / SD1.5."""
+    global _powerpaint_pipe
+    if _powerpaint_pipe is None:
+        return
+    try:
+        import torch
+
+        pipe, _device, _use_cuda = _powerpaint_pipe
+        del pipe
+        _powerpaint_pipe = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        _powerpaint_pipe = None
+
+
 def _get_sd_pipe():
     """Lazy-load Stable Diffusion 1.5 Inpainting (local weights under models/)."""
     global _sd_pipe
@@ -271,6 +377,7 @@ def _get_sd_pipe():
         from services.model_download import ensure_sd_inpaint
 
         _release_sdxl_pipe()
+        _release_powerpaint_pipe()
         model_dir = ensure_sd_inpaint()
         use_cuda = torch.cuda.is_available()
         device = torch.device("cuda" if use_cuda else "cpu")
@@ -311,6 +418,7 @@ def _get_sdxl_pipe(model_dir: str | None = None):
             _release_sdxl_pipe()
 
         _release_sd_pipe()
+        _release_powerpaint_pipe()
         resolved = Path(model_dir) if model_dir else ensure_sdxl_inpaint()
         # Some community "inpainting" snapshots ship base-pipeline model_index / unet
         # in_channels=4 while weights are 9-channel inpaint — patch before load.
@@ -344,6 +452,63 @@ def _get_sdxl_pipe(model_dir: str | None = None):
         pipe._pe_model_dir = str(resolved)
         _sdxl_pipe = (pipe, device, True)
     return _sdxl_pipe
+
+
+def _get_powerpaint_pipe():
+    """Lazy-load PowerPaint V1 (SD1.5 inpaint + task tokens) — CUDA preferred."""
+    global _powerpaint_pipe
+    if _powerpaint_pipe is None:
+        import importlib.util
+        import torch
+        from diffusers import StableDiffusionInpaintPipeline
+
+        from services.model_download import ensure_powerpaint
+
+        if not torch.cuda.is_available():
+            raise InpaintError("PowerPaint requires CUDA; falling back")
+
+        _release_sdxl_pipe()
+        _release_sd_pipe()
+        model_dir = ensure_powerpaint()
+        tok_path = model_dir / "power_paint_tokenizer.py"
+        if not tok_path.is_file():
+            raise InpaintError("PowerPaint tokenizer module missing")
+
+        spec = importlib.util.spec_from_file_location("power_paint_tokenizer", tok_path)
+        if spec is None or spec.loader is None:
+            raise InpaintError("Failed to load PowerPaint tokenizer")
+        tok_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tok_mod)
+
+        device = torch.device("cuda")
+        dtype = torch.float16
+        try:
+            pipe = StableDiffusionInpaintPipeline.from_pretrained(
+                str(model_dir),
+                torch_dtype=dtype,
+                variant="fp16",
+                safety_checker=None,
+                requires_safety_checker=False,
+                local_files_only=True,
+            )
+        except Exception:
+            pipe = StableDiffusionInpaintPipeline.from_pretrained(
+                str(model_dir),
+                torch_dtype=dtype,
+                safety_checker=None,
+                requires_safety_checker=False,
+                local_files_only=True,
+            )
+        pipe.tokenizer = tok_mod.PowerPaintTokenizer(pipe.tokenizer)
+        pipe = pipe.to(device)
+        pipe.set_progress_bar_config(disable=True)
+        pipe.enable_attention_slicing()
+        try:
+            pipe.vae.enable_slicing()
+        except Exception:
+            pass
+        _powerpaint_pipe = (pipe, device, True)
+    return _powerpaint_pipe
 
 
 def _detect_waterish_hole(rgb: np.ndarray, hard: np.ndarray) -> bool:
@@ -446,6 +611,24 @@ def _seed_water_texture_stamp(rgb: np.ndarray, hard: np.ndarray) -> np.ndarray:
     return out
 
 
+def _scene_for_hole(rgb: np.ndarray, hard: np.ndarray):
+    from services.scene_context import classify_hole_scene
+
+    return classify_hole_scene(rgb, hard)
+
+
+def _prompts_for_scene(scene: str) -> tuple[str, str]:
+    from services.scene_context import scene_prompts
+
+    return scene_prompts(scene)  # type: ignore[arg-type]
+
+
+def _seed_for_scene(rgb: np.ndarray, hard: np.ndarray, scene: str) -> np.ndarray:
+    from services.scene_context import seed_hole_for_scene
+
+    return seed_hole_for_scene(rgb, hard, scene)  # type: ignore[arg-type]
+
+
 def inpaint_patch_sd(
     rgb: np.ndarray,
     mask: np.ndarray,
@@ -458,8 +641,8 @@ def inpaint_patch_sd(
     Runs at up to 640px (CPU) or 768px (CUDA) on the long side, then pastes
     the synthesized hole back into the original-resolution crop.
 
-    On coastal/water holes, seeds the mask with a classical water fill and runs
-    SD at reduced strength so it refines ripples instead of inventing a soft plaque.
+    Scene-aware seeding/prompts so water, sky, vegetation, and indoor fills
+    don't all share the generic person-conditioned path.
     """
     import cv2
     import torch
@@ -469,7 +652,9 @@ def inpaint_patch_sd(
         return rgb.copy()
 
     pipe, device, use_cuda = _get_sd_pipe()
-    waterish = _detect_waterish_hole(rgb, hard)
+    scene = _scene_for_hole(rgb, hard)
+    waterish = scene == "water" or _detect_waterish_hole(rgb, hard)
+    open_fill = scene in ("water", "sky") or waterish
 
     # Water holes: CUDA 768 is the practical sweet spot for SD1.5 (1024 adds cost, little gain).
     if max_side is None:
@@ -478,16 +663,17 @@ def inpaint_patch_sd(
         else:
             max_side = 640
     if num_steps is None:
-        num_steps = 40 if use_cuda else 32
+        base = 40 if use_cuda else 32
+        num_steps = _tier_num_steps(int(base * 0.6), base, (base + 8) if use_cuda else base)
 
     # Grow the hole so hair fringes / silhouette edges get regenerated.
-    grow_k = 21 if waterish else 17
-    grow_iters = 2 if waterish else 1
+    grow_k = 21 if open_fill else 17
+    grow_iters = 2 if open_fill else 1
     k_grow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (grow_k, grow_k))
     hard_grown = cv2.dilate(hard.astype(np.uint8), k_grow, iterations=grow_iters) > 0
 
-    # Water: seed the hole so SD is not staring at a person (which yields white plaques).
-    src_rgb = _seed_water_context(rgb, hard_grown) if waterish else rgb
+    # Seed so SD is not staring at a person (which yields soft plaques).
+    src_rgb = _seed_for_scene(rgb, hard_grown, "water" if waterish else scene)
 
     h, w = rgb.shape[:2]
     scale = min(1.0, float(max_side) / float(max(h, w)))
@@ -513,12 +699,11 @@ def inpaint_patch_sd(
     pil_img = Image.fromarray(img_small)
     pil_msk = Image.fromarray(msk_small)
 
-    prompt = _SD_WATER_PROMPT if waterish else _SD_REMOVE_PROMPT
-    negative = _SD_WATER_NEGATIVE if waterish else _SD_REMOVE_NEGATIVE
-    # Water: mostly generative on a water seed (person gone) so ripples can appear.
-    # Too-low strength just keeps the soft TELEA plaque.
-    strength = 0.88 if waterish else 1.0
-    guidance = 7.0 if waterish else (7.5 if use_cuda else 7.0)
+    prompt, negative = _prompts_for_scene("water" if waterish else scene)
+    # Open fills: light refine on exemplar-seeded water so ripples survive.
+    # High strength wiped texture and left soft plaques matching Quick.
+    strength = 0.72 if open_fill else 1.0
+    guidance = 6.5 if open_fill else (7.5 if use_cuda else 7.0)
 
     def _run_once(seed: int):
         generator = torch.Generator(device=device).manual_seed(int(seed))
@@ -533,7 +718,7 @@ def inpaint_patch_sd(
             generator=generator,
         )
         try:
-            if waterish:
+            if open_fill:
                 return pipe(**kwargs).images[0]
             return pipe(**kwargs, padding_mask_crop=64).images[0]
         except TypeError:
@@ -541,8 +726,14 @@ def inpaint_patch_sd(
             return pipe(**kwargs).images[0]
 
     with torch.inference_mode():
-        # Water+CUDA: two seeds, keep the more textured / less washed fill.
-        seeds = (42,)
+        # Multi-seed on open / large / best-quality holes — keep most textured fill.
+        large = int(hard_grown.sum()) > 4000
+        if _tier_allows_multi_seed() and (
+            open_fill or large or get_removal_quality() == "best"
+        ) and use_cuda:
+            seeds = (42, 77, 113)
+        else:
+            seeds = (42,)
         best_gen = None
         best_score = -1.0
         for seed in seeds:
@@ -594,21 +785,24 @@ def inpaint_patch_sdxl(
     if not use_cuda:
         raise InpaintError("SDXL inpaint requires CUDA")
 
-    waterish = _detect_waterish_hole(rgb, hard)
+    scene = _scene_for_hole(rgb, hard)
+    waterish = scene == "water" or _detect_waterish_hole(rgb, hard)
+    open_fill = scene in ("water", "sky") or waterish
+    effective_scene = "water" if waterish else scene
 
     if max_side is None:
         max_side = 1024
     if num_steps is None:
-        num_steps = 40
+        num_steps = _tier_num_steps(28, 40, 48)
 
     # Grow the hole so hair fringes / silhouette edges get regenerated.
-    grow_k = 21 if waterish else 17
-    grow_iters = 2 if waterish else 1
+    grow_k = 21 if open_fill else (19 if scene == "vegetation" else 17)
+    grow_iters = 2 if open_fill else 1
     k_grow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (grow_k, grow_k))
     hard_grown = cv2.dilate(hard.astype(np.uint8), k_grow, iterations=grow_iters) > 0
 
-    # Water: stamp real ripple patches (not soft TELEA) so SDXL has energy to refine.
-    src_rgb = _seed_water_texture_stamp(rgb, hard_grown) if waterish else rgb
+    # Scene seed: stamp real texture so SDXL has energy to refine (not a person silhouette).
+    src_rgb = _seed_for_scene(rgb, hard_grown, effective_scene)
 
     h, w = rgb.shape[:2]
     scale = min(1.0, float(max_side) / float(max(h, w)))
@@ -634,13 +828,11 @@ def inpaint_patch_sdxl(
     pil_img = Image.fromarray(img_small)
     pil_msk = Image.fromarray(msk_small)
 
-    prompt = _SD_WATER_PROMPT if waterish else _SD_REMOVE_PROMPT
-    negative = _SD_WATER_NEGATIVE if waterish else _SD_REMOVE_NEGATIVE
-    # Official SDXL inpaint card: strength < 1.0. High strength so stamped ripples
-    # get re-harmonized without keeping a soft person-shaped TELEA plaque.
-    strength = 0.97 if waterish else 0.99
-    # Slightly lower CFG preserves surrounding water color/ripple better.
-    guidance = 6.5 if waterish else 7.5
+    prompt, negative = _prompts_for_scene(effective_scene)
+    # Seed carries real water texture; light refine harmonizes without soft plaques.
+    # Prior high strength (~0.97) erased exemplar ripples → Best ≈ Quick grey plaque.
+    strength = 0.68 if open_fill else 0.99
+    guidance = 6.0 if open_fill else (7.0 if scene == "structured" else 7.5)
 
     def _run_once(seed: int):
         generator = torch.Generator(device=device).manual_seed(int(seed))
@@ -664,7 +856,16 @@ def inpaint_patch_sdxl(
             return pipe(**kwargs).images[0]
 
     with torch.inference_mode():
-        seeds = (42, 77, 113) if waterish else (42,)
+        large = int(hard_grown.sum()) > 4000
+        if _tier_allows_multi_seed() and (
+            open_fill
+            or large
+            or get_removal_quality() == "best"
+            or scene in ("vegetation", "structured")
+        ):
+            seeds = (42, 77, 113)
+        else:
+            seeds = (42,)
         best_gen = None
         best_score = -1.0
         for seed in seeds:
@@ -675,7 +876,136 @@ def inpaint_patch_sdxl(
             tex = float(np.abs(g[hard_grown] - cv2.GaussianBlur(g, (0, 0), 2.0)[hard_grown]).mean())
             mean_l = float(g[hard_grown].mean())
             wash_pen = max(0.0, mean_l - 210.0) * 0.08
-            # Prefer fills whose mean luminance is near the ring (avoids milky plaques).
+            # Prefer fills whose mean luminance AND HF energy are near the ring.
+            ring = cv2.dilate(hard_grown.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))) > 0
+            ring = ring & (~hard_grown)
+            if int(ring.sum()) >= 64:
+                ring_l = float(g[ring].mean())
+                wash_pen += abs(mean_l - ring_l) * 0.05
+                ring_tex = float(
+                    np.abs(g[ring] - cv2.GaussianBlur(g, (0, 0), 2.0)[ring]).mean()
+                )
+                # Penalize soft plaques relative to ring ripple energy.
+                if ring_tex > 1.0:
+                    wash_pen += max(0.0, ring_tex * 0.85 - tex) * 0.35
+            score = tex - wash_pen
+            if score > best_score:
+                best_score = score
+                best_gen = candidate
+        gen = best_gen
+
+    result = rgb.copy()
+    result[hard_grown] = gen[hard_grown]
+
+    region = result[hard]
+    if region.size and region.mean() > 252 and region.std() < 3:
+        raise InpaintError("SDXL inpaint produced blank white fill in masked region")
+    return result
+
+
+def inpaint_patch_powerpaint(
+    rgb: np.ndarray,
+    mask: np.ndarray,
+    *,
+    max_side: int | None = None,
+    num_steps: int | None = None,
+) -> np.ndarray:
+    """Object erase via PowerPaint V1 (SD1.5 inpaint + P_ctxt / P_obj task tokens).
+
+    Uses high CFG object-removal prompting so the model fills background context
+    instead of regenerating a soft person-shaped plaque.
+    """
+    import cv2
+    import torch
+
+    hard = mask > 127
+    if not hard.any():
+        return rgb.copy()
+
+    pipe, device, use_cuda = _get_powerpaint_pipe()
+    if not use_cuda:
+        raise InpaintError("PowerPaint requires CUDA")
+
+    scene = _scene_for_hole(rgb, hard)
+    waterish = scene == "water" or _detect_waterish_hole(rgb, hard)
+    open_fill = scene in ("water", "sky") or waterish
+    effective_scene = "water" if waterish else scene
+
+    if max_side is None:
+        max_side = 768
+    if num_steps is None:
+        num_steps = _tier_num_steps(28, 40, 48)
+
+    grow_k = 21 if open_fill else 17
+    grow_iters = 2 if open_fill else 1
+    k_grow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (grow_k, grow_k))
+    hard_grown = cv2.dilate(hard.astype(np.uint8), k_grow, iterations=grow_iters) > 0
+
+    # Seed holes so the UNet is not conditioned on a person silhouette.
+    src_rgb = _seed_for_scene(rgb, hard_grown, effective_scene)
+
+    h, w = rgb.shape[:2]
+    scale = min(1.0, float(max_side) / float(max(h, w)))
+    nw = max(8, int(round(w * scale)))
+    nh = max(8, int(round(h * scale)))
+    nw = _ceil_modulo(nw, 8)
+    nh = _ceil_modulo(nh, 8)
+
+    if nw != w or nh != h:
+        img_small = cv2.resize(src_rgb, (nw, nh), interpolation=cv2.INTER_AREA)
+        msk_small = cv2.resize(
+            (hard_grown.astype(np.uint8) * 255),
+            (nw, nh),
+            interpolation=cv2.INTER_NEAREST,
+        )
+    else:
+        img_small = src_rgb
+        msk_small = (hard_grown.astype(np.uint8) * 255)
+
+    msk_small = ((msk_small > 127).astype(np.uint8)) * 255
+    pil_img = Image.fromarray(img_small)
+    pil_msk = Image.fromarray(msk_small)
+
+    # PowerPaint object-removal: P_ctxt positive + P_obj negative, CFG >= 10.
+    base_prompt, base_neg = _prompts_for_scene(effective_scene)
+    prompt = f"{base_prompt}, empty scene P_ctxt"
+    negative = f"{base_neg} P_obj"
+    strength = 0.70 if open_fill else 0.99
+    guidance = 11.0 if open_fill else 12.0
+
+    def _run_once(seed: int):
+        generator = torch.Generator(device=device).manual_seed(int(seed))
+        kwargs = dict(
+            prompt=prompt,
+            negative_prompt=negative,
+            image=pil_img,
+            mask_image=pil_msk,
+            height=nh,
+            width=nw,
+            num_inference_steps=int(num_steps),
+            guidance_scale=float(guidance),
+            strength=float(strength),
+            generator=generator,
+        )
+        try:
+            return pipe(**kwargs).images[0]
+        except TypeError:
+            kwargs.pop("height", None)
+            kwargs.pop("width", None)
+            return pipe(**kwargs).images[0]
+
+    with torch.inference_mode():
+        seeds = (42, 77) if waterish and _tier_allows_multi_seed() else (42,)
+        best_gen = None
+        best_score = -1.0
+        for seed in seeds:
+            candidate = np.array(_run_once(seed).convert("RGB"))
+            if candidate.shape[0] != h or candidate.shape[1] != w:
+                candidate = cv2.resize(candidate, (w, h), interpolation=cv2.INTER_LANCZOS4)
+            g = cv2.cvtColor(candidate, cv2.COLOR_RGB2GRAY).astype(np.float32)
+            tex = float(np.abs(g[hard_grown] - cv2.GaussianBlur(g, (0, 0), 2.0)[hard_grown]).mean())
+            mean_l = float(g[hard_grown].mean())
+            wash_pen = max(0.0, mean_l - 210.0) * 0.08
             ring = cv2.dilate(hard_grown.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))) > 0
             ring = ring & (~hard_grown)
             if int(ring.sum()) >= 64:
@@ -692,7 +1022,7 @@ def inpaint_patch_sdxl(
 
     region = result[hard]
     if region.size and region.mean() > 252 and region.std() < 3:
-        raise InpaintError("SDXL inpaint produced blank white fill in masked region")
+        raise InpaintError("PowerPaint produced blank white fill in masked region")
     return result
 
 
@@ -712,6 +1042,17 @@ class GenerativeRemoveBackend(InpaintBackend):
     engine = "sdxl"
 
     def inpaint_crop(self, rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        if _prefer_powerpaint():
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    self.engine = "powerpaint"
+                    return inpaint_patch_powerpaint(rgb, mask)
+            except InpaintError:
+                pass
+            except Exception:
+                pass
         try:
             import torch
 
@@ -732,25 +1073,44 @@ class GenerativeRemoveBackend(InpaintBackend):
 
 
 class AiRemoveBackend(InpaintBackend):
-    """SDXL generative inpaint (CUDA) with SD1.5 then LaMa torch fallback."""
+    """Best Quality erase path (CUDA): scene-routed PowerPaint / SDXL → SD1.5 → LaMa.
+
+    Default PHOTO_ENHANCER_ERASE_ENGINE=auto:
+      - structured/indoor → PowerPaint (dedicated erase) then SDXL
+      - water/sky/open → SDXL (better texture energy) then PowerPaint
+    Force with powerpaint | sdxl | auto.
+    """
 
     is_generative = True
     engine = "sdxl"
 
     def inpaint_crop(self, rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        hard = mask > 127
+        prefer_ppt = _erase_engine_prefers_powerpaint(rgb, hard)
+        order = ("powerpaint", "sdxl") if prefer_ppt else ("sdxl", "powerpaint")
         gen_exc: Exception | None = None
-        try:
-            import torch
 
-            if torch.cuda.is_available():
+        for name in order:
+            try:
+                import torch
+
+                if not torch.cuda.is_available():
+                    break
+                if name == "powerpaint":
+                    self.engine = "powerpaint"
+                    return inpaint_patch_powerpaint(rgb, mask)
                 self.engine = "sdxl"
                 return inpaint_patch_sdxl(rgb, mask)
-        except Exception as exc:
-            gen_exc = exc
-            try:
-                _release_sdxl_pipe()
-            except Exception:
-                pass
+            except Exception as exc:
+                if gen_exc is None:
+                    gen_exc = exc
+                try:
+                    if name == "powerpaint":
+                        _release_powerpaint_pipe()
+                    else:
+                        _release_sdxl_pipe()
+                except Exception:
+                    pass
 
         try:
             self.engine = "sd15"
@@ -760,7 +1120,6 @@ class AiRemoveBackend(InpaintBackend):
                 gen_exc = sd15_exc
             try:
                 out = inpaint_patch_torch(rgb, mask)
-                # Mark that we fell back so callers can apply LaMa-oriented postprocess.
                 self.is_generative = False
                 self.engine = "lama"
                 return out
@@ -770,6 +1129,92 @@ class AiRemoveBackend(InpaintBackend):
                 raise InpaintError(
                     f"Generative inpaint failed ({gen_exc}); LaMa fallback failed ({lama_exc})"
                 ) from lama_exc
+
+
+def _erase_engine_name() -> str:
+    import os
+
+    return os.environ.get("PHOTO_ENHANCER_ERASE_ENGINE", "auto").strip().lower() or "auto"
+
+
+def _prefer_powerpaint() -> bool:
+    return _erase_engine_name() in ("powerpaint", "ppt", "erase")
+
+
+def _erase_engine_prefers_powerpaint(rgb: np.ndarray, hard: np.ndarray) -> bool:
+    """Scene-aware default: PowerPaint for structured; SDXL for open water/sky."""
+    name = _erase_engine_name()
+    if name in ("powerpaint", "ppt", "erase"):
+        return True
+    if name in ("sdxl", "sd", "juggernaut"):
+        return False
+    # auto
+    try:
+        from services.scene_context import classify_hole_scene
+
+        scene = classify_hole_scene(rgb, hard)
+        # Structured indoor: PowerPaint erase is better than SDXL mega-hole smears.
+        return scene in ("structured", "generic", "vegetation")
+    except Exception:
+        return False
+
+
+class StructuredClassicalBackend(InpaintBackend):
+    """LaMa + PatchMatch path used when structured mega-holes would melt floors."""
+
+    is_generative = False
+    engine = "lama_pm"
+
+    def inpaint_crop(self, rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        try:
+            return inpaint_patch_torch(rgb, mask)
+        except Exception:
+            return inpaint_patch_onnx_tiled(rgb, mask)
+
+
+def warm_inpaint_engines() -> dict:
+    """Load the primary erase engine onto GPU (one pipe — avoid VRAM thrash)."""
+    import torch
+
+    status: dict = {
+        "cuda": bool(torch.cuda.is_available()),
+        "sdxl": False,
+        "powerpaint": False,
+        "sd15": False,
+        "warmed": None,
+    }
+    if not status["cuda"]:
+        # CPU: warm Quick LaMa ONNX only.
+        try:
+            _get_lama_onnx_session()
+            status["warmed"] = "lama_onnx"
+        except Exception:
+            pass
+        return status
+
+    # Prefer PowerPaint (dedicated erase) when present; else SDXL.
+    try:
+        from services.model_download import _powerpaint_present, _sdxl_inpaint_present
+
+        if _powerpaint_present() or _prefer_powerpaint():
+            _get_powerpaint_pipe()
+            status["powerpaint"] = True
+            status["warmed"] = "powerpaint"
+            return status
+        if _sdxl_inpaint_present():
+            _get_sdxl_pipe()
+            status["sdxl"] = True
+            status["warmed"] = "sdxl"
+            return status
+    except Exception:
+        pass
+    try:
+        _get_sd_pipe()
+        status["sd15"] = True
+        status["warmed"] = "sd15"
+    except Exception:
+        pass
+    return status
 
 
 class LamaTorchBackend(InpaintBackend):

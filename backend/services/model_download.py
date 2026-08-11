@@ -79,6 +79,10 @@ def _sdxl_juggernaut_dir() -> Path:
     return _models_dir() / "sdxl-inpainting-juggernaut"
 
 
+def _powerpaint_dir() -> Path:
+    return _models_dir() / "powerpaint-v1"
+
+
 def _realesrgan_pth() -> Path:
     return _models_dir() / "RealESRGAN_x4plus.pth"
 
@@ -95,6 +99,8 @@ SD_INPAINT_REPO = "stable-diffusion-v1-5/stable-diffusion-inpainting"
 # Official Diffusers SDXL inpaint (ungated). Photoreal Juggernaut-X preferred when present.
 SDXL_INPAINT_REPO = "diffusers/stable-diffusion-xl-1.0-inpainting-0.1"
 SDXL_JUGGERNAUT_REPO = "GraydientPlatformAPI/juggernaut-x-inpainting-sdxl"
+# PowerPaint V1 — dedicated object-removal task prompts (ungated Sanster pack).
+POWERPAINT_REPO = "Sanster/PowerPaint-V1-stable-diffusion-inpainting"
 
 
 def _sd_inpaint_present() -> bool:
@@ -105,6 +111,14 @@ def _sdxl_inpaint_present() -> bool:
     return (_sdxl_inpaint_dir() / "model_index.json").is_file() or (
         _sdxl_juggernaut_dir() / "model_index.json"
     ).is_file()
+
+
+def _powerpaint_present() -> bool:
+    d = _powerpaint_dir()
+    return (d / "model_index.json").is_file() and (
+        (d / "unet" / "diffusion_pytorch_model.fp16.safetensors").is_file()
+        or (d / "unet" / "diffusion_pytorch_model.safetensors").is_file()
+    )
 
 
 def resolve_sdxl_inpaint_dir() -> Path:
@@ -187,6 +201,10 @@ def _u2net_home() -> Path:
 def _ultralytics_home() -> Path:
     import os
 
+    if "ULTRALYTICS_HOME" not in os.environ:
+        from paths import configure_runtime_paths
+
+        configure_runtime_paths()
     return Path(os.environ["ULTRALYTICS_HOME"])
 
 
@@ -389,8 +407,16 @@ def _build_registry() -> list[ModelEntry]:
             ),
         ),
         ModelEntry(
+            id="powerpaint",
+            name="PowerPaint V1 (AI Remove / object erase)",
+            size_estimate_mb=4500,
+            feature="Object removal (dedicated erase, CUDA)",
+            present_fn=_powerpaint_present,
+            download_fn=lambda: _download_powerpaint(),
+        ),
+        ModelEntry(
             id="sdxl_inpaint",
-            name="SDXL Inpaint (AI Remove / Best Quality)",
+            name="SDXL Inpaint (AI Remove fallback)",
             size_estimate_mb=7000,
             feature="Object removal (generative AI, CUDA)",
             present_fn=_sdxl_inpaint_present,
@@ -424,11 +450,16 @@ def _build_registry() -> list[ModelEntry]:
         ),
         ModelEntry(
             id="yolov8_seg",
-            name="YOLOv8 Seg (people)",
-            size_estimate_mb=7,
-            feature="Auto-detect people",
-            present_fn=lambda: _find_ultralytics_weight("yolov8n-seg.pt") is not None,
-            download_fn=lambda: _download_ultralytics_tracked("yolov8n-seg.pt", "yolov8_seg", "YOLOv8 Seg"),
+            name="YOLOv8s Seg (people/objects)",
+            size_estimate_mb=23,
+            feature="Auto-detect people + smart-select assist",
+            present_fn=lambda: (
+                _find_ultralytics_weight("yolov8s-seg.pt") is not None
+                or _find_ultralytics_weight("yolov8n-seg.pt") is not None
+            ),
+            download_fn=lambda: _download_ultralytics_tracked(
+                "yolov8s-seg.pt", "yolov8_seg", "YOLOv8s Seg"
+            ),
         ),
     ]
 
@@ -932,6 +963,67 @@ def ensure_sdxl_inpaint() -> Path:
             _download_sdxl_inpaint,
         )
     return resolve_sdxl_inpaint_dir()
+
+
+def _download_powerpaint() -> None:
+    from huggingface_hub import snapshot_download
+
+    dest = _powerpaint_dir()
+    dest.mkdir(parents=True, exist_ok=True)
+    _update_model_status("powerpaint", "downloading")
+    _set_progress(
+        message="Downloading PowerPaint V1 object-erase (~4.5 GB)…",
+    )
+    _log(logging.INFO, f"Downloading HuggingFace snapshot: {POWERPAINT_REPO} -> {dest}")
+    last_exc: Exception | None = None
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        try:
+            snapshot_download(
+                repo_id=POWERPAINT_REPO,
+                local_dir=str(dest),
+                token=False,
+                ignore_patterns=[
+                    "*.bin",
+                    "*.onnx",
+                    "*.msgpack",
+                    "*.h5",
+                    "*.ot",
+                    "safety_checker/*",
+                    "*ControlNet*",
+                    "demo.py",
+                ],
+            )
+            if not _powerpaint_present():
+                raise RuntimeError(
+                    f"PowerPaint download finished but required files are missing under {dest}"
+                )
+            _update_model_status("powerpaint", "present")
+            _set_progress(percent=100.0, message="PowerPaint V1 downloaded.")
+            _log(logging.INFO, f"Completed PowerPaint download at {dest}")
+            return
+        except Exception as exc:
+            last_exc = exc
+            _log(
+                logging.WARNING,
+                f"PowerPaint download attempt {attempt}/{DOWNLOAD_RETRIES} failed: {exc}",
+                exc=exc,
+            )
+            if attempt < DOWNLOAD_RETRIES:
+                time.sleep(DOWNLOAD_BACKOFF_SEC * attempt)
+    assert last_exc is not None
+    raise last_exc
+
+
+def ensure_powerpaint() -> Path:
+    """PowerPaint V1 — dedicated object-removal inpaint (~4.5 GB, CUDA)."""
+    _models_dir().mkdir(parents=True, exist_ok=True)
+    if not _powerpaint_present():
+        _track_on_demand(
+            "powerpaint",
+            "PowerPaint V1 (object erase)",
+            _download_powerpaint,
+        )
+    return _powerpaint_dir()
 
 
 def ensure_realesrgan_model() -> Path:
