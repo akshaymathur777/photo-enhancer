@@ -20,7 +20,10 @@ runs/
 
 # Release bundles (attached to GitHub Releases — too large for git)
 PhotoEnhancer-v*-windows-x64.zip
+PhotoEnhancer-v*-windows-x64.part*
 *.zip
+build-0.1.4.log
+docs/release-notes-v0.1.4-gh.txt
 
 # Node
 frontend/node_modules/
