@@ -1,0 +1,37 @@
+## Photo Enhancer v0.1.4 (beta)
+
+Local AI photo studio for Windows — offline background removal, object removal, upscale, portrait retouch, and 30+ filters.
+
+### Highlights since v0.1.3
+
+- **Object removal that uses the models you paid to download.** Best Quality routes water/sky to SDXL and indoor/structured scenes to PowerPaint when CUDA and weights are present. Classical fills remain the Fast/Balanced path and the fallback.
+- **Generative fills keep the hole.** Best Quality no longer hard-overwrites SDXL/PowerPaint results with classical exemplar plaques.
+- **~45× faster classical water fill** via vectorized neighbour search (same pixels as before).
+- **Honest Models panel + editor badge** when Best Quality weights are missing, partial, or CUDA is unavailable.
+- **Eval harness** for coastal/library regression gates, with engine/postfill recorded and latency advisory-only.
+
+### Install
+
+1. Download `PhotoEnhancer-v0.1.4-windows-x64.zip`
+2. Extract anywhere (avoid syncing folders like OneDrive during first launch)
+3. Run `PhotoEnhancer.exe`
+4. On first run, AI models download once (~6–8 GB total) to `%APPDATA%\PhotoEnhancer\models\`
+5. For Best Quality object removal, also download **PowerPaint (~6 GB)** and **SDXL Inpaint (~6.5 GB)** from the in-app Models panel (needs NVIDIA CUDA)
+
+### Requirements
+
+- Windows 10/11 (64-bit), 8 GB+ RAM, 10 GB+ free disk (20 GB+ if using Best Quality generative erase)
+- NVIDIA CUDA recommended for Best Quality; CPU still works for classical paths
+- Internet only for initial model download
+- WebView2 (pre-installed on Windows 11)
+
+### Notes
+
+- **Unsigned build** — Windows SmartScreen may warn; expected for personal builds
+- **AGPL** — object removal uses Ultralytics SAM/YOLO; see THIRD_PARTY_NOTICES.md before commercial redistribution
+- **Optional cloud** — OpenAI chat only if you set OPENAI_API_KEY; all image tools stay local
+- Best Quality on a busy 16 GB GPU can OOM if ComfyUI/other apps hold VRAM; close them first
+
+### Source
+
+Build from source: see README.md
