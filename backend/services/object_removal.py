@@ -2554,11 +2554,13 @@ def inpaint_objects(
             ghost2 = _residual_ghost_mask(rgb, result, hard_mask, protect=protect)
             if ghost2 is not None:
                 result = _hard_exemplar_overwrite(rgb, result, ghost2, protect=protect, scene="water")
-        elif protect is not None and protect.any():
-            # Generative kept: still never leave paint on locked people.
-            out = result.copy()
-            out[protect] = rgb[protect]
-            result = out
+        else:
+            # Generative kept: protect subjects + seam polish only (no HF plaque inject).
+            if protect is not None and protect.any():
+                out = result.copy()
+                out[protect] = rgb[protect]
+                result = out
+            result = _match_edge_band_luminance(rgb, result, hard_mask, protect=protect)
     elif mode == "ai" and not gen_kept:
         residual = _residual_ghost_mask(rgb, result, hard_mask, protect=protect)
         if residual is not None:

@@ -829,10 +829,13 @@ def inpaint_patch_sdxl(
     pil_msk = Image.fromarray(msk_small)
 
     prompt, negative = _prompts_for_scene(effective_scene)
-    # Seed carries real water texture; light refine harmonizes without soft plaques.
-    # Prior high strength (~0.97) erased exemplar ripples → Best ≈ Quick grey plaque.
-    strength = 0.68 if open_fill else 0.99
-    guidance = 6.0 if open_fill else (7.0 if scene == "structured" else 7.5)
+    if open_fill:
+        # Keep negatives short — CLIP truncates past 77 tokens.
+        negative = f"{negative}, ghost face, translucent person, double exposure"
+    # Seed carries real water texture. Mid-high strength erases person ghosts
+    # without the ~0.97 wipe that collapsed ripples into a grey plaque.
+    strength = 0.88 if open_fill else 0.99
+    guidance = 5.0 if open_fill else (7.0 if scene == "structured" else 7.5)
 
     def _run_once(seed: int):
         generator = torch.Generator(device=device).manual_seed(int(seed))
@@ -876,6 +879,12 @@ def inpaint_patch_sdxl(
             tex = float(np.abs(g[hard_grown] - cv2.GaussianBlur(g, (0, 0), 2.0)[hard_grown]).mean())
             mean_l = float(g[hard_grown].mean())
             wash_pen = max(0.0, mean_l - 210.0) * 0.08
+            # Penalize leftover skin / warm face tones inside open-water holes.
+            if open_fill:
+                hsv = cv2.cvtColor(candidate, cv2.COLOR_RGB2HSV)
+                hh, ss, vv = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+                skin = hard_grown & (hh < 25) & (ss > 40) & (vv > 60) & (vv < 230)
+                wash_pen += float(skin.mean()) * 40.0
             # Prefer fills whose mean luminance AND HF energy are near the ring.
             ring = cv2.dilate(hard_grown.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))) > 0
             ring = ring & (~hard_grown)

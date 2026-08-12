@@ -99,7 +99,7 @@ def scene_prompts(scene: SceneKind) -> tuple[str, str]:
             "photorealistic water with fine natural ripples and sunlit specular highlights, "
             "continuous shoreline context, overcast or natural daylight, seamless photograph, "
             "matching surrounding texture, no people",
-            negative + ", smooth blob, repeating pattern, stretched pixels, low-resolution patch",
+            negative + ", smooth blob, ghost face, translucent person",
         )
     if scene == "sky":
         return (
