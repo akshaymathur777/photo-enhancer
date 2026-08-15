@@ -1,10 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec for Photo Enhancer Windows desktop app (onedir)."""
 
-import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 block_cipher = None
 ROOT = Path(SPECPATH)
@@ -61,31 +60,19 @@ hiddenimports = [
     "dotenv",
     "certifi",
     "pooch",
-    "diffusers",
-    "accelerate",
-    "huggingface_hub",
-    "safetensors",
-    "transformers",
 ]
 
+# Keep submodule collection modest — full torch submodule walks can hang Analysis.
 for pkg in (
     "fastapi",
     "starlette",
     "uvicorn",
-    "rembg",
-    "onnxruntime",
-    "cv2",
-    "torch",
-    "torchvision",
-    "ultralytics",
-    "spandrel",
     "httpx",
     "numpy",
     "diffusers",
     "accelerate",
     "huggingface_hub",
     "safetensors",
-    "transformers",
 ):
     try:
         hiddenimports.extend(collect_submodules(pkg))
@@ -93,9 +80,19 @@ for pkg in (
         pass
 
 binaries = []
-# Full collect_all for packages that need data files; torch uses dynamic libs only
-# (collect_all(torch) pulls ~3.9GB including CUDA + headers — we filter below).
-for pkg in ("onnxruntime", "cv2", "rembg", "certifi", "diffusers", "accelerate", "huggingface_hub"):
+# collect_all(torch) is required for CUDA DLLs; we filter junk after Analysis.
+for pkg in (
+    "onnxruntime",
+    "torch",
+    "cv2",
+    "rembg",
+    "certifi",
+    "diffusers",
+    "accelerate",
+    "huggingface_hub",
+    "transformers",
+    "safetensors",
+):
     try:
         _datas, _binaries, _hidden = collect_all(pkg)
         datas.extend(_datas)
@@ -104,15 +101,8 @@ for pkg in ("onnxruntime", "cv2", "rembg", "certifi", "diffusers", "accelerate",
     except Exception:
         pass
 
-try:
-    binaries.extend(collect_dynamic_libs("torch"))
-    binaries.extend(collect_dynamic_libs("torchvision"))
-except Exception:
-    pass
-
 hiddenimports = list(dict.fromkeys(hiddenimports))
 
-# Optional / unused CUDA + packaging junk. Safe for SDXL/PowerPaint inference.
 _SKIP_SUBSTR = (
     ".lib",
     ".pdb",
@@ -156,6 +146,7 @@ a = Analysis(
         "polars",
         "matplotlib",
         "numba",
+        "tensorboard",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -163,7 +154,6 @@ a = Analysis(
     noarchive=False,
 )
 
-# Second pass: Analysis may re-add torch junk via hooks.
 a.binaries = [b for b in a.binaries if _keep_path(str(b[0])) and _keep_path(str(b[1]))]
 a.datas = [d for d in a.datas if _keep_path(str(d[0])) and _keep_path(str(d[1]))]
 
