@@ -3,7 +3,7 @@
 ; Build the app first: build.bat
 
 #define MyAppName "Photo Enhancer"
-#define MyAppVersion "0.1.5"
+#define MyAppVersion "0.1.6"
 #define MyAppPublisher "Photo Enhancer"
 #define MyAppExeName "PhotoEnhancer.exe"
 #define BuildDir "dist\PhotoEnhancer"

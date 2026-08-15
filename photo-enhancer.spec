@@ -103,8 +103,10 @@ for pkg in (
 
 hiddenimports = list(dict.fromkeys(hiddenimports))
 
+# Skip static linker junk and unused CUDA extras. Do NOT match ".libs" wheel
+# folders (numpy.libs / scipy.libs) — a bare ".lib" substring falsely strips them
+# and the frozen exe then fails importing numpy._multiarray_umath.
 _SKIP_SUBSTR = (
-    ".lib",
     ".pdb",
     "cudnn_adv",
     "cusolvermg",
@@ -113,14 +115,13 @@ _SKIP_SUBSTR = (
     "cupti",
     "_polars_runtime",
     "torch/include",
-    "torch\\include",
-    "/include/",
-    "\\include\\",
 )
 
 
 def _keep_path(path: str) -> bool:
     p = path.replace("\\", "/").lower()
+    if p.endswith(".lib") or "/include/" in p:
+        return False
     return not any(s.lower().replace("\\", "/") in p for s in _SKIP_SUBSTR)
 
 

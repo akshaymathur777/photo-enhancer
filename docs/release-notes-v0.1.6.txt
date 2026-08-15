@@ -1,0 +1,39 @@
+﻿## Photo Enhancer v0.1.6 (beta)
+
+Fixes a critical packaging bug in v0.1.5: the PyInstaller filter treated `numpy.libs` / `scipy.libs` as static `.lib` junk and stripped OpenBLAS, so the `.exe` crashed on launch importing numpy. Also retains the v0.1.5 fix that ships `diffusers` / `accelerate` / `huggingface_hub` for Best Quality generative erase.
+
+### Prefer this over
+
+- **v0.1.5** — does not start (missing OpenBLAS)
+- **v0.1.4** — missing diffusion stack for Best Quality
+
+### Highlights since v0.1.3
+
+- Best Quality routes water/sky to SDXL and indoor/structured to PowerPaint when CUDA + weights are present; generative fills keep the hole instead of being overwritten by classical plaques
+- ~45× faster classical water fill
+- Models panel + editor badge when Best Quality weights/CUDA are missing
+- Eval harness with engine/postfill recording
+
+### Install (split download)
+
+GitHub limits assets to 2 GB. Download **both** parts, then:
+
+```powershell
+cmd /c copy /b PhotoEnhancer-v0.1.6-windows-x64.part1.bin+PhotoEnhancer-v0.1.6-windows-x64.part2.bin PhotoEnhancer-v0.1.6-windows-x64.zip
+Expand-Archive PhotoEnhancer-v0.1.6-windows-x64.zip -DestinationPath PhotoEnhancer-v0.1.6
+cd PhotoEnhancer-v0.1.6
+.\PhotoEnhancer.exe
+```
+
+Models download on first use to `%APPDATA%\PhotoEnhancer\models\`. Best Quality also needs PowerPaint (~6 GB) and SDXL Inpaint (~6.5 GB) from the Models panel (NVIDIA CUDA).
+
+### Requirements
+
+- Windows 10/11 x64, 8 GB+ RAM, 10 GB+ disk (20 GB+ with Best Quality)
+- WebView2; internet only for model download
+- Close other GPU apps before Best Quality on 16 GB cards
+
+### Notes
+
+- Unsigned — SmartScreen may warn
+- AGPL via Ultralytics SAM/YOLO — see THIRD_PARTY_NOTICES.md
