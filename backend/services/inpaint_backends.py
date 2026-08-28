@@ -511,6 +511,28 @@ def _get_powerpaint_pipe():
     return _powerpaint_pipe
 
 
+def _convex_open_fill_mask(hard: np.ndarray) -> np.ndarray:
+    """Replace a person-shaped open-fill hole with its convex hull.
+
+    A standing silhouette (narrow head, wider torso) conditions SDXL to invent
+    a ghost even when the seed is water. Convex hull makes the mask a blob.
+    """
+    import cv2
+
+    u8 = hard.astype(np.uint8)
+    if int(u8.sum()) < 32:
+        return hard
+    contours, _ = cv2.findContours(u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    hull = np.zeros_like(u8)
+    for contour in contours:
+        if cv2.contourArea(contour) < 32:
+            continue
+        cv2.fillConvexPoly(hull, cv2.convexHull(contour), 1)
+    if int(hull.sum()) < int(u8.sum()):
+        return hard
+    return hull.astype(bool)
+
+
 def _detect_waterish_hole(rgb: np.ndarray, hard: np.ndarray) -> bool:
     """True when water/sky sits in the ring or in a band above the hole."""
     import cv2
@@ -800,6 +822,15 @@ def inpaint_patch_sdxl(
     grow_iters = 2 if open_fill else 1
     k_grow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (grow_k, grow_k))
     hard_grown = cv2.dilate(hard.astype(np.uint8), k_grow, iterations=grow_iters) > 0
+    if open_fill:
+        ys0, _ = np.where(hard)
+        hard_grown = _convex_open_fill_mask(hard_grown)
+        # Dilate+hull climb into sky above the subject — clamp to original hole top.
+        if len(ys0):
+            y_top = int(ys0.min())
+            above = np.zeros_like(hard_grown, dtype=bool)
+            above[:y_top, :] = True
+            hard_grown = hard_grown & ~(above & ~hard)
 
     # Scene seed: stamp real texture so SDXL has energy to refine (not a person silhouette).
     src_rgb = _seed_for_scene(rgb, hard_grown, effective_scene)

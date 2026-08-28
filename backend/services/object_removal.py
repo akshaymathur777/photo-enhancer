@@ -1952,12 +1952,45 @@ def _blobify_water_hole(
     waterish = ((hh >= 85) & (hh <= 135) & (ss >= 10) & (vv > 100)) | (
         (ss < 50) & (vv > 130) & (vv < 235)
     )
-    # Heavy close + dilate into water — breaks head/shoulder silhouette.
+    # Heavy close + convex hull — a standing figure's head against hills is still
+    # person-shaped if we only grow into water (body becomes a blob, head doesn't).
     k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (35, 35))
     closed = cv2.morphologyEx(hard.astype(np.uint8), cv2.MORPH_CLOSE, k_close, iterations=2)
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    hull = np.zeros_like(closed)
+    for contour in contours:
+        if cv2.contourArea(contour) < 40:
+            continue
+        cv2.fillConvexPoly(hull, cv2.convexHull(contour), 1)
+    if int(hull.sum()) >= int(closed.sum()):
+        closed = hull
     k_dil = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (41, 41))
     grown = cv2.dilate(closed, k_dil, iterations=1)
+    # Grow into water as before. Dilate also climbs into sky above the head — clamp
+    # that out. Widen only the head band horizontally into hills so the head
+    # silhouette is covered without a sky-column ghost.
     blob = ((grown > 0) & (hard | waterish)).astype(bool)
+    ys_h, _ = np.where(hard)
+    if len(ys_h):
+        y_top, y_bot = int(ys_h.min()), int(ys_h.max())
+        above = np.zeros_like(blob, dtype=bool)
+        above[:y_top, :] = True
+        blob = blob & ~(above & ~hard)
+        y_head = y_top + max(1, int(0.32 * (y_bot - y_top + 1)))
+        head = hard.copy()
+        head[y_head:, :] = False
+        head_wide = (
+            cv2.dilate(
+                head.astype(np.uint8),
+                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (45, 45)),
+                iterations=1,
+            )
+            > 0
+        )
+        head_wide[:y_top, :] = False
+        head_wide[y_head:, :] = False
+        hillish = ~waterish
+        blob = blob | (head_wide & hillish)
     # Keep largest component overlapping raw/hard.
     n_lab, lab, st, _ = cv2.connectedComponentsWithStats(blob.astype(np.uint8), 8)
     if n_lab > 2:

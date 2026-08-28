@@ -310,6 +310,51 @@ def test_mode_presets_map_to_three_tiers():
     assert resolve_inpaint_mode("best_quality") == "ai"
 
 
+def test_convex_open_fill_mask_widens_head():
+    mask = np.zeros((120, 80), np.uint8)
+    mask[10:40, 32:48] = 1  # narrow head
+    mask[40:100, 18:62] = 1  # wider torso
+    hull = inpaint_backends._convex_open_fill_mask(mask.astype(bool))
+    head_w = int(hull[20].sum())
+    torso_w = int(hull[70].sum())
+    assert head_w > 16, f"head still a silhouette ({head_w}px)"
+    assert head_w >= torso_w * 0.45
+
+
+def test_blobify_grows_head_into_hills():
+    rgb = np.zeros((160, 120, 3), np.uint8)
+    rgb[:70] = (70, 95, 55)  # hills
+    rgb[70:] = (95, 145, 185)  # water
+    hard = np.zeros((160, 120), np.uint8)
+    hard[20:55, 50:70] = 255  # head on hills
+    hard[55:130, 40:80] = 255  # body in water
+    out = object_removal._blobify_water_hole(rgb, hard, protect=None, raw=hard)
+    blob = out > 127
+    # Head band widens horizontally into hills; must not climb a sky column above the head.
+    assert int(blob[35].sum()) > 24
+    assert int(blob.sum()) > int((hard > 127).sum())
+    assert int(blob[:15].sum()) == 0, "blob climbed into sky above the head"
+
+
+def test_water_seed_does_not_copy_same_column_hills():
+    rgb = np.zeros((180, 160, 3), np.uint8)
+    rgb[:70] = (80, 100, 70)
+    rgb[70:] = (150, 165, 185)  # grey-bay water (matches _water_source_map)
+    for x in range(160):
+        rgb[:70, x, 0] = x  # unique hill column
+    hard = np.zeros((180, 160), dtype=bool)
+    hard[30:140, 70:90] = True
+    with mock.patch(
+        "services.object_removal._all_people_binary",
+        lambda *a, **k: np.zeros(hard.shape, np.uint8),
+    ):
+        seeded = scene_context.seed_hole_for_scene(rgb, hard, "water")
+    head_r = seeded[30:55, 70:90, 0].astype(np.int16)
+    stripe = np.arange(70, 90, dtype=np.int16)[None, :]
+    orig_match = float((head_r == stripe).mean())
+    assert orig_match < 0.20, f"head seed still traces hill columns (match={orig_match:.2f})"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

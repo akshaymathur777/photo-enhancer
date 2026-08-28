@@ -646,18 +646,23 @@ def _synthesize_water_2d(original: np.ndarray, hard: np.ndarray, water_src: np.n
         use_sky = depth < 0.28 and (ups_s >= 0.30 or ups_l >= 0.30) and ups_w < 0.45
 
         if use_sky:
+            # Horizontal land/sky band above the hole. Same-x upward copy paints a
+            # hill-colored head silhouette — the coastal ghost SDXL then "refines".
+            y_lo = max(0, y_top - 48)
+            x0b, x1b = max(0, x_min - 40), min(w, x_max + 41)
+            band = np.zeros_like(hard, dtype=bool)
+            band[y_lo:y_top, x0b:x1b] = True
+            pool = band & (skyish | landish) & (~hard) & (~people)
+            pys, pxs = np.where(pool)
+            if len(pys) < 8:
+                pys, pxs = sy, sx
             for x in xs:
-                picked = None
-                for dy in (1, 2, 4, 8, 16, 28):
-                    yy = y - dy
-                    if yy < 0:
-                        break
-                    if not hard[yy, x] and not people[yy, x]:
-                        picked = original[yy, x].astype(np.float32)
-                        break
-                if picked is None:
+                if len(pys) == 0:
                     j = int(rng.integers(0, len(sy)))
                     picked = original[int(sy[j]), int(sx[j])].astype(np.float32)
+                else:
+                    j = int(rng.integers(0, len(pys)))
+                    picked = original[int(pys[j]), int(pxs[j])].astype(np.float32)
                 out[y, x] = picked
             continue
 
