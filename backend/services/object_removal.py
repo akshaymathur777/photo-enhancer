@@ -2546,10 +2546,8 @@ def inpaint_objects(
     else:
         result = _inpaint_once(rgb, hard_mask, mode=mode, edge_softness=edge_softness, protect=protect)
 
-    # Second pass: classical residual cleanup — skip hard hole overwrite when a
-    # generative engine already owns the fill. Soft-plaque rescue is classical-only:
-    # on Best Quality water it was replacing the entire SDXL hole with the grey
-    # exemplar plaque the generative path was meant to avoid.
+    # Second pass: classical residual cleanup. Generative soft water plaques also
+    # get texture rescue when flatter than the ring (SDXL coastal often is).
     open_bg = scene_is_open_fill(scene) or _is_water_or_sky_ring(rgb, hard_mask > 127)
     gen_kept = _is_generative_engine(_last_removal_meta.get("engine"))
     if open_bg:
@@ -2588,7 +2586,24 @@ def inpaint_objects(
             if ghost2 is not None:
                 result = _hard_exemplar_overwrite(rgb, result, ghost2, protect=protect, scene="water")
         else:
-            # Generative kept: protect subjects + seam polish only (no HF plaque inject).
+            # Generative kept: seam polish, plus soft-plaque rescue when SDXL
+            # leaves a milky water hole. Classical water texture now beats that
+            # plaque on coastal (rescue used to be skipped because exemplar was grey).
+            residual = _soft_plaque_residual_mask(rgb, result, hard_mask, protect=protect)
+            if residual is not None:
+                rescued = _rescue_soft_generative_water(rgb, result, residual)
+                rescued = fill_for_scene(rgb, rescued, residual, scene="water")
+                rescued = _match_fill_to_context(rgb, rescued, residual)
+                hard_r = residual > 127
+                if protect is not None and protect.any():
+                    hard_r = hard_r & (~protect)
+                out = result.copy()
+                out[hard_r] = rescued[hard_r]
+                result = out
+                _last_removal_meta = {
+                    **_last_removal_meta,
+                    "postfill": "plaque_rescue",
+                }
             if protect is not None and protect.any():
                 out = result.copy()
                 out[protect] = rgb[protect]

@@ -438,7 +438,6 @@ def _get_sdxl_pipe(model_dir: str | None = None):
                 torch_dtype=dtype,
                 local_files_only=True,
             )
-        pipe = pipe.to(device)
         pipe.set_progress_bar_config(disable=True)
         pipe.enable_attention_slicing()
         try:
@@ -449,6 +448,13 @@ def _get_sdxl_pipe(model_dir: str | None = None):
             pipe.vae.enable_tiling()
         except Exception:
             pass
+        # Full .to(cuda) needs a quiet GPU. When free VRAM is tight (Comfy/Ollama/
+        # desktop), offload avoids WDDM thrash and access-violation crashes.
+        free_b, _total_b = torch.cuda.mem_get_info()
+        if free_b < 10 * 1024**3:
+            pipe.enable_model_cpu_offload()
+        else:
+            pipe = pipe.to(device)
         pipe._pe_model_dir = str(resolved)
         _sdxl_pipe = (pipe, device, True)
     return _sdxl_pipe
@@ -865,7 +871,8 @@ def inpaint_patch_sdxl(
         negative = f"{negative}, ghost face, translucent person, double exposure"
     # Seed carries real water texture. Mid-high strength erases person ghosts
     # without the ~0.97 wipe that collapsed ripples into a grey plaque.
-    strength = 0.88 if open_fill else 0.99
+    # 0.88/0.93 still left soft coastal plaques after blobify; 0.96 regenerates more.
+    strength = 0.96 if open_fill else 0.99
     guidance = 5.0 if open_fill else (7.0 if scene == "structured" else 7.5)
 
     def _run_once(seed: int):
