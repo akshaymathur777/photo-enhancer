@@ -1,0 +1,39 @@
+## Photo Enhancer v0.1.7 (beta)
+
+Improves Best Quality object removal on coastal / water scenes. SDXL no longer leaves person-shaped water holes or milky soft plaques; soft fills are rescued with classical water texture when flatter than the surrounding ripples. Also offloads SDXL when free VRAM is tight so desktop GPU apps are less likely to thrash or crash the erase path.
+
+### Prefer this over
+
+- **v0.1.6** — coastal Best Quality often left soft water plaques / silhouette ghosts
+- **v0.1.5** — does not start (missing OpenBLAS)
+- **v0.1.4** — missing diffusion stack for Best Quality
+
+### Highlights
+
+- Blobify + sky clamp so water holes are not person-shaped against hills
+- Soft-plaque rescue after generative water fill (coastal fixture: pass_case)
+- SDXL `enable_model_cpu_offload` when free VRAM < 10 GB
+
+### Install (split download)
+
+GitHub limits assets to 2 GB. Download **both** parts, then:
+
+```powershell
+cmd /c copy /b PhotoEnhancer-v0.1.7-windows-x64.part1.bin+PhotoEnhancer-v0.1.7-windows-x64.part2.bin PhotoEnhancer-v0.1.7-windows-x64.zip
+Expand-Archive PhotoEnhancer-v0.1.7-windows-x64.zip -DestinationPath PhotoEnhancer-v0.1.7
+cd PhotoEnhancer-v0.1.7
+.\PhotoEnhancer.exe
+```
+
+Models download on first use to `%APPDATA%\PhotoEnhancer\models\`. Best Quality also needs PowerPaint (~6 GB) and SDXL Inpaint (~6.5 GB) from the Models panel (NVIDIA CUDA).
+
+### Requirements
+
+- Windows 10/11 x64, 8 GB+ RAM, 10 GB+ disk (20 GB+ with Best Quality)
+- WebView2; internet only for model download
+- Close other GPU apps before Best Quality on 16 GB cards
+
+### Notes
+
+- Unsigned — SmartScreen may warn
+- AGPL via Ultralytics SAM/YOLO — see THIRD_PARTY_NOTICES.md

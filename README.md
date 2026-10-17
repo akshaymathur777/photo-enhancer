@@ -1,6 +1,6 @@
 # Photo Enhancer
 
-**v0.1.6 beta** — Local AI photo studio for Windows. Background removal, object removal, upscale, portrait retouch, and 30+ creative filters. **100% offline by default.** No account, no credits, no cloud upload.
+**v0.1.7 beta** — Local AI photo studio for Windows. Background removal, object removal, upscale, portrait retouch, and 30+ creative filters. **100% offline by default.** No account, no credits, no cloud upload.
 
 Personal project — see [ABOUT.md](ABOUT.md) for motivation, limits, and roadmap.
 
