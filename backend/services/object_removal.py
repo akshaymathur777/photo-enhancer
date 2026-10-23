@@ -2184,8 +2184,8 @@ def _inpaint_once(
     crop_protect = protect[y0:y1, x0:x1] if protect is not None else None
     crop_scene = classify_hole_scene(crop_rgb, crop_hard > 127)
     water_bg = crop_scene == "water" or _is_water_or_sky_ring(crop_rgb, crop_hard > 127)
-    # Best + CUDA + downloaded weights: PowerPaint (structured) / SDXL (water, sky).
-    # Otherwise structured indoor → classical TELEA, open water → classical exemplar.
+    # Best + CUDA + downloaded weights: PowerPaint (structured / generic).
+    # Water/sky always use classical exemplar (see water_hole short-circuit below).
     generative_tier = (
         mode == "ai"
         and get_removal_quality() == "best"
@@ -2273,7 +2273,10 @@ def _inpaint_once(
         return out
 
     water_hole = water_bg or crop_scene == "water"
-    if water_hole and not generative_tier:
+    # Water always uses classical exemplar — SDXL+plaque_rescue matched this quality
+    # on coastal but burned 10GB+ VRAM and often soft-plaqued before rescue. Same UX,
+    # far less GPU risk on 16GB cards sharing Comfy/Ollama.
+    if water_hole:
         return _water_exemplar_result()
 
     try:

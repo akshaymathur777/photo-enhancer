@@ -506,13 +506,17 @@ def _get_powerpaint_pipe():
                 local_files_only=True,
             )
         pipe.tokenizer = tok_mod.PowerPaintTokenizer(pipe.tokenizer)
-        pipe = pipe.to(device)
         pipe.set_progress_bar_config(disable=True)
         pipe.enable_attention_slicing()
         try:
             pipe.vae.enable_slicing()
         except Exception:
             pass
+        free_b, _total_b = torch.cuda.mem_get_info()
+        if free_b < 10 * 1024**3:
+            pipe.enable_model_cpu_offload()
+        else:
+            pipe = pipe.to(device)
         _powerpaint_pipe = (pipe, device, True)
     return _powerpaint_pipe
 

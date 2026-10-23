@@ -117,8 +117,9 @@ def route(
     return calls
 
 
-def test_water_uses_sdxl_only_on_best_with_cuda_and_weights():
-    assert route("water", "best", cuda=True, weights=True) == ["sdxl"]
+def test_water_always_uses_exemplar_even_on_best():
+    # Classical water matches SDXL+rescue quality without GPU thrash.
+    assert route("water", "best", cuda=True, weights=True) == ["exemplar:water"]
     assert route("water", "best", cuda=False, weights=True) == ["exemplar:water"]
     assert route("water", "best", cuda=True, weights=False) == ["exemplar:water"]
     assert route("water", "balanced", cuda=True, weights=True) == ["exemplar:water"]
@@ -149,9 +150,10 @@ def test_fast_tier_with_ai_remove_forced_stays_classical_on_water_and_structured
 
 
 def test_generative_failure_falls_back_to_classical():
+    # Water never enters SDXL; structured PowerPaint still falls back to LaMa.
     assert route(
         "water", "best", cuda=True, weights=True, generative_fails=True
-    ) == ["sdxl", "exemplar:water"]
+    ) == ["exemplar:water"]
     assert route(
         "structured", "best", cuda=True, weights=True, generative_fails=True
     ) == ["powerpaint", "lama_onnx"]
@@ -162,16 +164,10 @@ def test_water_meta_engine_reports_exemplar_fallback():
     assert object_removal.get_last_removal_meta()["engine"] == "water_exemplar"
 
 
-def test_generative_success_skips_hard_exemplar_overwrite():
-    """Best + generative fill must keep hole pixels — no classical fill_for_scene /
-    hard exemplar overwrite of the interior (the A/B regression).
-    """
+def test_water_best_short_circuits_to_exemplar_without_sdxl():
+    """Best water must not load SDXL — classical exemplar is the product path."""
     rgb, mask = _sample_image()
-    # Distinct generative paint so we can prove it survives.
-    gen_fill = rgb.copy()
-    gen_fill[mask > 127] = (240, 40, 40)
-
-    state: dict = {"calls": [], "filled": False}
+    state: dict = {"sdxl_calls": 0}
 
     class GenBackend(inpaint_backends.InpaintBackend):
         def __init__(self):
@@ -179,38 +175,15 @@ def test_generative_success_skips_hard_exemplar_overwrite():
             self.engine = "sdxl"
 
         def inpaint_crop(self, crop_rgb, crop_mask):
-            state["calls"].append("sdxl")
-            out = crop_rgb.copy()
-            hard = crop_mask > 127
-            # Paint a unique color into the hole so overwrite is detectable.
-            out[hard] = (240, 40, 40)
-            return out
-
-    def _fill_for_scene(original, inpainted, m, scene=None):
-        state["calls"].append(f"postfill:{scene}")
-        # Classical overwrite would replace generative paint from original.
-        hard = m > 127
-        out = inpainted.copy()
-        out[hard] = original[hard]
-        return out
-
-    hard_calls: list[str] = []
-
-    def _hard_overwrite(original, result, mask_u8, protect=None, scene="water"):
-        hard_calls.append(scene)
-        return _fill_for_scene(original, result, mask_u8, scene=scene)
+            state["sdxl_calls"] += 1
+            return crop_rgb
 
     with ExitStack() as stack:
         p = stack.enter_context
         p(mock.patch.object(object_removal, "classify_hole_scene", lambda *a, **k: "water"))
         p(mock.patch.object(scene_context, "classify_hole_scene", lambda *a, **k: "water"))
         p(mock.patch.object(object_removal, "_is_water_or_sky_ring", lambda *a, **k: True))
-        p(mock.patch.object(object_removal, "fill_for_scene", _fill_for_scene))
-        p(mock.patch.object(object_removal, "_hard_exemplar_overwrite", _hard_overwrite))
         p(mock.patch.object(object_removal, "_scrub_other_people", lambda rgb, m: rgb))
-        p(mock.patch.object(
-            object_removal, "_hybrid_context_fill", lambda original, lama, m, scene=None: lama
-        ))
         p(mock.patch.object(
             scene_context, "_match_fill_hf_to_ring", lambda original, filled, *a, **k: filled
         ))
@@ -218,13 +191,6 @@ def test_generative_success_skips_hard_exemplar_overwrite():
         p(mock.patch("services.model_download._powerpaint_present", return_value=True))
         p(mock.patch("services.model_download._sdxl_inpaint_present", return_value=True))
         p(mock.patch.object(object_removal, "get_backend", lambda m: GenBackend()))
-        p(mock.patch.object(
-            object_removal, "_soft_plaque_residual_mask", lambda *a, **k: None
-        ))
-        p(mock.patch.object(object_removal, "_residual_ghost_mask", lambda *a, **k: None))
-        p(mock.patch.object(
-            object_removal, "_ghost_mad_expand_refill", lambda *a, **k: a[1]
-        ))
         p(mock.patch.object(
             object_removal, "_non_target_people_protect", lambda *a, **k: np.zeros(rgb.shape[:2], bool)
         ))
@@ -239,7 +205,7 @@ def test_generative_success_skips_hard_exemplar_overwrite():
         inpaint_backends.set_removal_quality("best")
         from PIL import Image
 
-        out = object_removal.inpaint_objects(
+        object_removal.inpaint_objects(
             Image.fromarray(rgb),
             Image.fromarray(mask),
             mode="ai",
@@ -247,15 +213,9 @@ def test_generative_success_skips_hard_exemplar_overwrite():
         )
 
     meta = object_removal.get_last_removal_meta()
-    assert meta["engine"] == "sdxl"
-    assert meta["postfill"] == "seam_only"
-    assert state["calls"] == ["sdxl"]
-    assert hard_calls == []
-    arr = np.array(out)
-    hole = mask > 127
-    # Generative red paint must survive — classical overwrite would restore ocean blue.
-    assert int(arr[hole][:, 0].mean()) > 200
-    assert int(np.abs(arr[hole].astype(np.float32) - rgb[hole].astype(np.float32)).mean()) > 30
+    assert meta["engine"] == "water_exemplar"
+    assert meta["postfill"] == "classical"
+    assert state["sdxl_calls"] == 0
 
 
 def test_quality_tiers_are_distinct():
