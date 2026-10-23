@@ -1,0 +1,38 @@
+## Photo Enhancer v0.1.8 (beta)
+
+Best Quality water erase now uses classical water exemplar instead of SDXL. Same coastal quality as v0.1.7’s SDXL+plaque_rescue path, without multi-GB VRAM thrash on 16 GB cards. PowerPaint (indoor/library) also offloads when free VRAM is under 10 GB.
+
+### Prefer this over
+
+- **v0.1.7** — water Best still loaded SDXL then rescued soft plaques
+- **v0.1.6 and older** — packaging / coastal plaque issues
+
+### Highlights
+
+- Water / coastal Best → `water_exemplar` (no SDXL)
+- PowerPaint `enable_model_cpu_offload` when free VRAM < 10 GB
+- Retains v0.1.7 blobify / head-band coastal mask fixes
+
+### Install (split download)
+
+GitHub limits assets to 2 GB. Download **both** parts, then:
+
+```powershell
+cmd /c copy /b PhotoEnhancer-v0.1.8-windows-x64.part1.bin+PhotoEnhancer-v0.1.8-windows-x64.part2.bin PhotoEnhancer-v0.1.8-windows-x64.zip
+Expand-Archive PhotoEnhancer-v0.1.8-windows-x64.zip -DestinationPath PhotoEnhancer-v0.1.8
+cd PhotoEnhancer-v0.1.8
+.\PhotoEnhancer.exe
+```
+
+Models download on first use to `%APPDATA%\PhotoEnhancer\models\`. Best Quality indoor scenes still benefit from PowerPaint (~6 GB) from the Models panel (NVIDIA CUDA). Coastal water no longer requires SDXL Inpaint.
+
+### Requirements
+
+- Windows 10/11 x64, 8 GB+ RAM, 10 GB+ disk (20 GB+ with Best Quality indoor)
+- WebView2; internet only for model download
+- Close other GPU apps before Best Quality PowerPaint on 16 GB cards
+
+### Notes
+
+- Unsigned — SmartScreen may warn
+- AGPL via Ultralytics SAM/YOLO — see THIRD_PARTY_NOTICES.md
