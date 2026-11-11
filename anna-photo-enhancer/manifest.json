@@ -1,5 +1,6 @@
 {
   "schema": 2,
+  "host_capabilities": ["llm.image", "llm.image.edit", "host.upload"],
   "required_executas": [
     {
       "tool_id": "bundled:photo-enhancer",
