@@ -223,9 +223,25 @@ Harness: `anna-app dev --llm-app-slug reliclear` · `llm bridge real → app_slu
 | `anna-app validate` | PASS with warning: schema ≤3 fields **`host_capabilities` and `ui.host_api.*` are retired/ignored** (dispatcher **0.33.0** / schema 4). Adding top-level `host_capabilities` is hygiene only — **not** an ACL fix for CF 502 |
 | Schema 4 host API | `host_api/methods.json`: every method callable by installed App; `image.edit` + `image.editAsync` present |
 | Manifest change | Top-level `host_capabilities: ["llm.image","llm.image.edit","host.upload"]` added; validate OK |
-| Live matrix C1/C2/E0–E3/A1 | **BLOCKED** — cloud VM cannot complete Anna login (Cloudflare Turnstile blocks headless browser); device-flow codes keep expiring unused (~19:20–19:48 UTC 2026-11-11). Current poll: see agent chat / Slack DM for live `user_code`. Optional unblock: Cursor secret `ANNA_APP_PAT` + `ANNA_APP_HOST=https://anna.partners` |
-| Probe script | `fixtures/diag-edit-502.js` + `fixtures/run-diag-cdp.mjs` ready once logged in |
-| Apps push | **NOT RUN** (needs auth) |
+| Live matrix C1/C2/E0–E3/A1 | **NOT RUN this cloud session** — user **skipped** device-login approval and `ANNA_APP_PAT` secrets (~21:09 UTC 2026-11-11). Turnstile blocks headless login in the VM; without PAT/device approve the live harness cannot hit production. Probe + CDP runner remain ready for a **local** run (see below). |
+| Probe script | `fixtures/diag-edit-502.js` + `fixtures/run-diag-cdp.mjs` ready |
+| Apps push | **NOT RUN** (auth skipped) |
+| Decision (cloud, no fresh matrix) | **Do not App Review.** Treat host sync `image.edit` as still platform-broken on prior evidence (upload/generate OK, edit CF HTML 502). `host_capabilities` / `ui.host_api.*` are **retired/ignored** on dispatcher 0.33.0 — not the 502 root cause. Forum #466 already posted; re-bump only after a local matrix produces fresh Rays + C1/C2/E0–E3/A1 contrast. |
+
+### Local matrix (run on a machine already logged into anna.partners)
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"   # if CLI installed with --prefix ~/.local
+anna-app whoami                        # must show anna.partners
+cd anna-photo-enhancer
+anna-app validate
+# optional draft push:
+# anna-app apps push
+anna-app dev --llm-app-slug reliclear --slug reliclear
+# other terminal, after :5180 is up:
+node fixtures/run-diag-cdp.mjs
+# results → .anna/diag-edit-502-result.json
+```
 
 ## 7. Current blocker — `image.edit` HTTP 502
 

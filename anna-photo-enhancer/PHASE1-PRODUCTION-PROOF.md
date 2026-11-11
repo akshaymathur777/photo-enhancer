@@ -140,6 +140,16 @@ A real photograph successfully completes:
 
 **Status: PARTIAL — exit criterion NOT MET (recovered NO).** Login + upload proven; host **`image.edit` still HTTP 502 CF HTML** after full A1–A3 smoke ~11:38–11:39 UTC **2026-11-02** (Rays `a542d9aba8021387` / `a542dabc5c5856d2` / `a542db4bb979be32`; also Oct 30 Ray `a52b06f55c168884`) — **past** scheduled `1.1.0-beta.201` day (`image.generate` last OK ~20:15 2026-10-28). **Enhance** + **Remove BG** complete via local fallbacks. Remove Object: clear unavailable message. Draft **rev 4**. Escalate forum (`FORUM-IMAGE-EDIT-502.md`); re-smoke host A1–A3 when image edit recovers; then consider `apps push` / `apps cut` prep — **do not submit App Review** until then (or explicit local-only accept).
 
+### Differential diagnosis attempt (2026-11-11 cloud agent)
+
+| Item | Result |
+| --- | --- |
+| CLI | **0.1.64** |
+| Manifest `host_capabilities` | Added; `anna-app validate` PASS — dispatcher **0.33.0** warns these + `ui.host_api.*` are **retired/ignored** (hygiene only; **not** CF 502 ACL) |
+| Live C1/C2/E0–E3/A1 | **NOT RUN** — cloud agent auth skipped (device approve + `ANNA_APP_PAT`) |
+| Apps push | **NOT RUN** (same) |
+| Decision | **No App Review.** Keep local Enhance/Remove BG. Re-run matrix locally via `fixtures/run-diag-cdp.mjs` when logged in; forum-bump #466 only with fresh Rays + contrast. Do not change `bundle/app.js` edit shape without a successful probe. |
+
 ---
 
 ## App changes (2026-10-27 retry)
