@@ -1,0 +1,16 @@
+{
+  "$schema": "anna-executas-lock/v1",
+  "host": "https://anna.partners",
+  "executas": {
+    "photo-enhancer": {
+      "tool_id": "tool-akshay-photo-enhancer-72jdd7jk",
+      "path": "./executas/photo-enhancer",
+      "source": "working"
+    },
+    "photo-enhancer-local": {
+      "tool_id": "tool-akshay-photo-enhancer-local-cwgtd7ym",
+      "path": "./executas/photo-enhancer-local",
+      "source": "working"
+    }
+  }
+}

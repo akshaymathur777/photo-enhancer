@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tool-dev-photo-enhancer"
+version = "0.1.0"
+description = "Photo Enhancer Executa — host image.edit tools for the Anna App"
+requires-python = ">=3.10"
+
+[project.scripts]
+"tool-dev-photo-enhancer" = "photo_enhancer_plugin:main"
+
+[tool.setuptools]
+py-modules = ["photo_enhancer_plugin"]

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tool-dev-photo-enhancer-local"
+version = "0.1.0"
+description = "Option B classical local Photo Enhancer Executa"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26",
+  "Pillow>=10.0",
+  "opencv-python-headless>=4.8",
+]
+
+[project.optional-dependencies]
+# Install into this executa's .venv (harness may lock Scripts/*.exe — prefer pip):
+#   uv pip install "rembg[cpu]>=2.0"
+# Or: uv sync --extra rembg  (when the console script is not locked)
+rembg = ["rembg[cpu]>=2.0"]
+
+[project.scripts]
+"tool-dev-photo-enhancer-local" = "photo_enhancer_local_plugin:main"
+
+[tool.setuptools]
+py-modules = ["photo_enhancer_local_plugin", "classical_ops"]

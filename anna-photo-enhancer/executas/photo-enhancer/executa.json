@@ -1,0 +1,10 @@
+{
+  "slug": "photo-enhancer",
+  "name": "Photo Enhancer",
+  "version": "0.1.0",
+  "executa_type": "tool",
+  "description": "Enhance photos, remove backgrounds, and clean objects via Anna host image APIs.",
+  "tool_id": "tool-dev-photo-enhancer",
+  "type": "python",
+  "host_capabilities": ["llm.image", "llm.image.edit"]
+}
