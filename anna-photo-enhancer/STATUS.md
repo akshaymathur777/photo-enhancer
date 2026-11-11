@@ -223,8 +223,9 @@ Harness: `anna-app dev --llm-app-slug reliclear` · `llm bridge real → app_slu
 | `anna-app validate` | PASS with warning: schema ≤3 fields **`host_capabilities` and `ui.host_api.*` are retired/ignored** (dispatcher **0.33.0** / schema 4). Adding top-level `host_capabilities` is hygiene only — **not** an ACL fix for CF 502 |
 | Schema 4 host API | `host_api/methods.json`: every method callable by installed App; `image.edit` + `image.editAsync` present |
 | Manifest change | Top-level `host_capabilities: ["llm.image","llm.image.edit","host.upload"]` added; validate OK |
-| Live matrix C1/C2/E0–E3/A1 | **BLOCKED** — cloud VM cannot complete Anna login (Cloudflare Turnstile “Verification failed”); device-flow approval must happen on the user’s browser |
-| Probe script | `fixtures/diag-edit-502.js` ready for harness CDP once logged in |
+| Live matrix C1/C2/E0–E3/A1 | **BLOCKED** — cloud VM cannot complete Anna login (Cloudflare Turnstile blocks headless browser); device-flow codes keep expiring unused (~19:20–19:48 UTC 2026-11-11). Current poll: see agent chat / Slack DM for live `user_code`. Optional unblock: Cursor secret `ANNA_APP_PAT` + `ANNA_APP_HOST=https://anna.partners` |
+| Probe script | `fixtures/diag-edit-502.js` + `fixtures/run-diag-cdp.mjs` ready once logged in |
+| Apps push | **NOT RUN** (needs auth) |
 
 ## 7. Current blocker — `image.edit` HTTP 502
 
