@@ -1,6 +1,6 @@
 # Reliclear (Anna App) — STATUS
 
-**As of:** 2026-11-11 ~17:44 UTC (Wed — Enhance host re-probe still CF 502; forum #466 still no staff reply)  
+**As of:** 2026-11-11 ~18:27 UTC (Wed — CLI upgraded to 0.1.64; differential diagnosis in progress; waiting on Anna device login for live matrix)  
 **Repo path:** `C:\Users\aksha\OneDrive\Documents\Projects\photo-enhancer\anna-photo-enhancer`  
 **Sources:** `PLAN.md`, `PHASE0-RULES.md`, `PHASE1-PRODUCTION-PROOF.md`, `fixtures/TEST-REPORT.md`, `fixtures/FORUM-IMAGE-EDIT-502.md`, `app.json`, `manifest.json`, `README.md`, `listing/`, git, live CLI/port check, hunter staff reply on forum #400
 
@@ -13,7 +13,7 @@
 | **Verdict** | **Host `image.edit` NOT recovered** as of Wed **2026-11-11 ~17:44 UTC**. Still Cloudflare **502 HTML** with pinned `fal-ai/nano-banana-2`. Latest Enhance Ray `a58f1a4069b08bdf`. Forum [#466](https://forum.anna.partners/t/image-edit-returns-http-502-cloudflare-bad-gateway-for-every-call-from-nookflip/466) — @Akshay + @Tralse posts; **no staff reply**. Host exit criterion **NOT MET**. **Do not submit App Review.** |
 | **Phase** | Phase 0 rules verified. Phase 1 production proof **PARTIAL**. **Phase 2 polish shipped**. Listing renamed to **Reliclear**. **Phase 3 listing assets started** (logo + screenshot checklist; Console upload still manual). |
 | **Draft** | Nexus `[DRAFT] Reliclear` slug **`reliclear`** **id=726**, working **rev 4** (unchanged this session — docs only; no bundle/`app.json` push). Not cut. **Not submitted to App Review.** |
-| **CLI** | `@anna-ai/cli` **0.1.61** |
+| **CLI** | `@anna-ai/cli` **0.1.64** (upgraded from 0.1.61; app-schema dispatcher **0.33.0**) |
 | **Auth (fresh)** | `anna-app whoami` → **LOGGED IN** · host `https://anna.partners` · scopes `aps:dev` · PAT ~82d (loose-perms warning on Windows) |
 | **OS user (fresh)** | `akshay\aksha` |
 | **Model pin** | `EDIT_MODEL = "fal-ai/nano-banana-2"` still in `bundle/app.js` **and** `executas/photo-enhancer/photo_enhancer_plugin.py` |
@@ -214,6 +214,17 @@ Harness: `anna-app dev --llm-app-slug reliclear` · `llm bridge real → app_slu
 **Exit criterion (usable Enhance/Remove BG while host down):** **MET via local** (reconfirmed 2026-11-02).
 
 ---
+
+## 6b. Differential diagnosis notes (2026-11-11 cloud agent)
+
+| Check | Result |
+| --- | --- |
+| CLI | Upgraded **0.1.61 → 0.1.64** (`~/.local` prefix) |
+| `anna-app validate` | PASS with warning: schema ≤3 fields **`host_capabilities` and `ui.host_api.*` are retired/ignored** (dispatcher **0.33.0** / schema 4). Adding top-level `host_capabilities` is hygiene only — **not** an ACL fix for CF 502 |
+| Schema 4 host API | `host_api/methods.json`: every method callable by installed App; `image.edit` + `image.editAsync` present |
+| Manifest change | Top-level `host_capabilities: ["llm.image","llm.image.edit","host.upload"]` added; validate OK |
+| Live matrix C1/C2/E0–E3/A1 | **BLOCKED** — cloud VM cannot complete Anna login (Cloudflare Turnstile “Verification failed”); device-flow approval must happen on the user’s browser |
+| Probe script | `fixtures/diag-edit-502.js` ready for harness CDP once logged in |
 
 ## 7. Current blocker — `image.edit` HTTP 502
 
