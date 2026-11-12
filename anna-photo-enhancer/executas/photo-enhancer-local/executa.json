@@ -1,0 +1,9 @@
+{
+  "slug": "photo-enhancer-local",
+  "name": "Photo Enhancer Local",
+  "version": "0.1.0",
+  "executa_type": "tool",
+  "description": "Option B classical CPU enhance / OpenCV inpaint / optional rembg. Runs on the Agent host (local binary path later).",
+  "tool_id": "tool-dev-photo-enhancer-local",
+  "type": "python"
+}

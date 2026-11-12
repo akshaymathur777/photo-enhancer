@@ -1,0 +1,15 @@
+{
+  "name": "Reliclear",
+  "slug": "reliclear",
+  "tagline": "AI background removal and photo enhance — one tap on Anna.",
+  "description": "Reliclear removes photo backgrounds with AI (rembg) and enhances clarity and color from one upload. Tries Anna host image.edit first; if platform photo-edit is unavailable, Remove background falls back to local rembg and Enhance falls back to classical local polish. Upload a photo in the App UI, process, preview, and download. Chat tools: enhance_photo and remove_background. Remove object is not included in this release.",
+  "category": "creative",
+  "bundled_executas": {
+    "photo-enhancer": {
+      "path": "./executas/photo-enhancer"
+    },
+    "photo-enhancer-local": {
+      "path": "./executas/photo-enhancer-local"
+    }
+  }
+}

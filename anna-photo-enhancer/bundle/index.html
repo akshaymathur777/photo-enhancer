@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reliclear</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app.js" type="module"></script>
+  </head>
+  <body>
+    <main class="app">
+      <header class="top">
+        <div class="brand-block">
+          <div class="brand">Reliclear</div>
+          <h1 class="hero">AI background removal and photo enhance</h1>
+          <p class="tag">Upload a photo, remove the background or enhance clarity, then download.</p>
+        </div>
+      </header>
+
+      <section class="panel">
+        <div class="modes" role="group" aria-label="Edit mode">
+          <button type="button" class="mode" data-mode="enhance" aria-pressed="true" title="Improve clarity, color, and detail">Enhance</button>
+          <button type="button" class="mode" data-mode="remove_bg" aria-pressed="false" title="AI cutout of the subject; transparent when possible">Remove background</button>
+          <!-- Remove object hidden for v0.1 App Review until host image.edit recovers -->
+        </div>
+        <p class="mode-help" id="mode-help">Improve clarity, color, and detail.</p>
+
+        <label class="drop" id="drop" for="file-input">
+          <strong>Upload photo</strong>
+          <span>Drop here or click to choose · JPG / PNG / WEBP · up to ~8&nbsp;MB inline</span>
+        </label>
+        <input class="hidden-input" id="file-input" type="file" accept="image/jpeg,image/png,image/webp,image/*" />
+
+        <div class="actions">
+          <button type="button" class="primary" id="run-btn" disabled>Process photo</button>
+          <button type="button" class="ghost" id="download-btn" disabled>Download result</button>
+          <div class="status" id="status">Connecting…</div>
+        </div>
+      </section>
+
+      <section class="panel compare">
+        <div class="frame">
+          <h2>Before</h2>
+          <div class="stage" id="before-stage">
+            <div class="placeholder">No photo yet</div>
+          </div>
+        </div>
+        <div class="frame">
+          <h2>After</h2>
+          <div class="stage" id="after-stage">
+            <div class="placeholder">Result appears here</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

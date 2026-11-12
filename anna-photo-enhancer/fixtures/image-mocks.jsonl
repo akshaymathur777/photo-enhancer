@@ -1,0 +1,4 @@
+{"ns":"image","method":"edit","match":{"promptIncludes":"Enhance this photograph"},"result":{"images":[{"url":"data:image/png;base64,aaa","mimeType":"image/png","width":1,"height":1}],"model":"mock-enhance"}}
+{"ns":"image","method":"edit","match":{"promptIncludes":"Remove the background"},"result":{"images":[{"url":"data:image/png;base64,bbb","mimeType":"image/png","width":1,"height":1}],"model":"mock-remove-bg"}}
+{"ns":"image","method":"edit","match":{"promptIncludes":"Remove the following"},"result":{"images":[{"url":"data:image/png;base64,ccc","mimeType":"image/png","width":1,"height":1}],"model":"mock-remove-object"}}
+{"ns":"image","method":"edit","result":{"images":[{"url":"data:image/png;base64,ddd","mimeType":"image/png","width":1,"height":1}],"model":"mock-edit-fallback"}}
