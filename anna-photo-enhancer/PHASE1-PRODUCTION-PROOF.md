@@ -148,7 +148,16 @@ A real photograph successfully completes:
 | Manifest `host_capabilities` | Added; `anna-app validate` PASS — dispatcher **0.33.0** warns these + `ui.host_api.*` are **retired/ignored** (hygiene only; **not** CF 502 ACL) |
 | Live C1/C2/E0–E3/A1 | **NOT RUN** — cloud agent auth skipped (device approve + `ANNA_APP_PAT`) |
 | Apps push | **NOT RUN** (same) |
-| Decision | **No App Review.** Keep local Enhance/Remove BG. Re-run matrix locally via `fixtures/run-diag-cdp.mjs` when logged in; forum-bump #466 only with fresh Rays + contrast. Do not change `bundle/app.js` edit shape without a successful probe. |
+| Decision (superseded) | Was “no App Review” pending matrix; **overridden** by local-first cut below |
+
+### Local-first App Review cut (2026-11-11)
+
+| Item | Choice |
+| --- | --- |
+| Ship | **Remove background** (rembg AI) + **Enhance** (classical local fallback); host `image.edit` still try-first |
+| Defer | **Remove object** hidden in UI; chat `remove_object` returns not-available |
+| Listing | Tagline/description BG + enhance only |
+| Next | Smoke → Console media → `apps cut 0.1.0` → `submit-review` |
 
 ---
 

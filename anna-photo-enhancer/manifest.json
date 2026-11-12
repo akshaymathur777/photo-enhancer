@@ -16,7 +16,7 @@
     }
   ],
   "tags": ["photo-enhancer", "image", "edit", "background-removal"],
-  "system_prompt_addendum": "Reliclear is installed. Default path (Option A): open the App UI with open_app_view (view: main) so the user can upload and process via Anna host image APIs, or call enhance_photo / remove_background / remove_object with an existing image URL. Optional local classical path (Option B): if photo-enhancer-local is available, local_enhance / local_inpaint / local_remove_bg run on the Agent host CPU (base64 PNG in/out) — use when the user wants offline/classical processing or host image edit is unavailable. Prefer App UI for local file upload. Explain which track you used.",
+  "system_prompt_addendum": "Reliclear is installed. Open the App UI with open_app_view (view: main) so the user can upload and process, or call enhance_photo / remove_background with an existing image URL. This release ships Enhance + Remove background only — do not offer remove_object. Prefer App UI for local file upload. If host image.edit fails, the UI falls back to local classical enhance / rembg. Explain which track you used.",
   "user_message_prefix_template": "[Reliclear] {user_message}",
   "ui": {
     "bundle": {

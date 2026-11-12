@@ -1,29 +1,33 @@
 // Reliclear Option A — host upload + image.edit (no local CUDA).
 import { AnnaAppRuntime } from "/static/anna-apps/_sdk/latest/index.js";
 
+// v0.1 App Review: UI ships Enhance + Remove background only.
+// remove_object kept for a later unhide when host image.edit recovers.
 const MODES = {
   enhance: {
     label: "Enhance",
-    help: "Improve clarity, color, and detail.",
+    help: "Improve clarity, color, and detail (local polish if Anna photo-edit is down).",
     running: "Enhancing…",
     prompt:
       "Enhance this photograph: improve clarity, natural detail, color balance, and mild sharpening. Keep the subject, composition, and identity unchanged. Do not add or remove objects. Photorealistic output.",
   },
   remove_bg: {
     label: "Remove background",
-    help: "Cut out the subject; transparent when possible.",
+    help: "AI cutout of the subject; transparent when possible.",
     running: "Removing background…",
     prompt:
       "Remove the background completely. Keep the main subject with clean edges. Output a transparent PNG when possible; otherwise a clean cutout on a plain white background. Do not alter the subject.",
   },
   remove_object: {
     label: "Remove object",
-    help: "Needs Anna photo-edit. Describe what to erase — e.g. power line, watermark, person on the left.",
+    help: "Not available in this release — needs Anna photo-edit.",
     running: "Removing object…",
     promptFor: (text) =>
       `Remove the following from this photograph and inpaint the area so it looks natural and continuous with the surroundings: ${text}. Preserve everything else. Photorealistic, no artifacts.`,
   },
 };
+
+const SHIPPED_MODES = ["enhance", "remove_bg"];
 
 const INLINE_SOFT_LIMIT = 7.5 * 1024 * 1024;
 // Forum #400 interim: GPT Image 2 edit route broken until ~2026-10-30 host rollout.
@@ -266,10 +270,10 @@ async function main() {
   const downloadBtn = document.getElementById("download-btn");
   const beforeStage = document.getElementById("before-stage");
   const afterStage = document.getElementById("after-stage");
-  const objectPrompt = document.getElementById("object-prompt");
-  const objectText = document.getElementById("object-text");
   const modeHelp = document.getElementById("mode-help");
-  const modeBtns = [...document.querySelectorAll(".mode")];
+  const modeBtns = [...document.querySelectorAll(".mode")].filter((btn) =>
+    SHIPPED_MODES.includes(btn.dataset.mode)
+  );
 
   let anna = null;
   let mode = "enhance";
@@ -281,7 +285,6 @@ async function main() {
     for (const btn of modeBtns) {
       btn.setAttribute("aria-pressed", String(btn.dataset.mode === mode));
     }
-    objectPrompt.classList.toggle("visible", mode === "remove_object");
     if (modeHelp) modeHelp.textContent = MODES[mode].help;
   }
 
@@ -303,7 +306,9 @@ async function main() {
 
   for (const btn of modeBtns) {
     btn.addEventListener("click", () => {
-      mode = btn.dataset.mode;
+      const next = btn.dataset.mode;
+      if (!SHIPPED_MODES.includes(next)) return;
+      mode = next;
       syncModeUi();
     });
   }
@@ -350,22 +355,16 @@ async function main() {
   runBtn.addEventListener("click", async () => {
     if (!anna || !file) return;
 
-    let prompt;
-    if (mode === "remove_object") {
-      const text = (objectText.value || "").trim();
-      if (!text) {
-        setStatus(
-          status,
-          "Describe what to remove — for example, the power line or watermark.",
-          true
-        );
-        objectText.focus();
-        return;
-      }
-      prompt = MODES.remove_object.promptFor(text);
-    } else {
-      prompt = MODES[mode].prompt;
+    if (!SHIPPED_MODES.includes(mode)) {
+      setStatus(
+        status,
+        "Remove object is not available in this release. Use Enhance or Remove background.",
+        true
+      );
+      return;
     }
+
+    const prompt = MODES[mode].prompt;
 
     runBtn.disabled = true;
     downloadBtn.disabled = true;
@@ -471,10 +470,9 @@ async function main() {
           throw editErr;
         }
 
-        // remove_object: host edit down and UI has no mask → clear message only (no fake inpaint).
+        // Unshipped modes (e.g. remove_object): no fake inpaint.
         throw new Error(
-          "Remove object needs Anna's photo-edit service, which is temporarily unavailable. " +
-            "Try Enhance or Remove background instead, or try Remove object again later."
+          "This mode is not available in this release. Try Enhance or Remove background."
         );
       }
 

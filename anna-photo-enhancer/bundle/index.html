@@ -12,16 +12,16 @@
       <header class="top">
         <div class="brand-block">
           <div class="brand">Reliclear</div>
-          <h1 class="hero">Enhance, remove backgrounds, erase objects</h1>
-          <p class="tag">Upload a photo, choose a mode, then download the result.</p>
+          <h1 class="hero">AI background removal and photo enhance</h1>
+          <p class="tag">Upload a photo, remove the background or enhance clarity, then download.</p>
         </div>
       </header>
 
       <section class="panel">
         <div class="modes" role="group" aria-label="Edit mode">
           <button type="button" class="mode" data-mode="enhance" aria-pressed="true" title="Improve clarity, color, and detail">Enhance</button>
-          <button type="button" class="mode" data-mode="remove_bg" aria-pressed="false" title="Cut out the subject; transparent when possible">Remove background</button>
-          <button type="button" class="mode" data-mode="remove_object" aria-pressed="false" title="Erase a described object — needs Anna photo-edit">Remove object</button>
+          <button type="button" class="mode" data-mode="remove_bg" aria-pressed="false" title="AI cutout of the subject; transparent when possible">Remove background</button>
+          <!-- Remove object hidden for v0.1 App Review until host image.edit recovers -->
         </div>
         <p class="mode-help" id="mode-help">Improve clarity, color, and detail.</p>
 
@@ -30,19 +30,6 @@
           <span>Drop here or click to choose · JPG / PNG / WEBP · up to ~8&nbsp;MB inline</span>
         </label>
         <input class="hidden-input" id="file-input" type="file" accept="image/jpeg,image/png,image/webp,image/*" />
-
-        <div class="object-prompt" id="object-prompt">
-          <label for="object-text">What should be removed?</label>
-          <input
-            id="object-text"
-            type="text"
-            placeholder="e.g. the power line, the watermark, the person on the left"
-            autocomplete="off"
-          />
-          <p class="object-hint" id="object-hint">
-            Be specific. Remove object uses Anna photo-edit (not available offline).
-          </p>
-        </div>
 
         <div class="actions">
           <button type="button" class="primary" id="run-btn" disabled>Process photo</button>

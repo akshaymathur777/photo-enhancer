@@ -10,9 +10,9 @@
 
 | Field | Value |
 | --- | --- |
-| **Verdict** | **Host `image.edit` NOT recovered** as of Wed **2026-11-11 ~17:44 UTC**. Still Cloudflare **502 HTML** with pinned `fal-ai/nano-banana-2`. Latest Enhance Ray `a58f1a4069b08bdf`. Forum [#466](https://forum.anna.partners/t/image-edit-returns-http-502-cloudflare-bad-gateway-for-every-call-from-nookflip/466) — @Akshay + @Tralse posts; **no staff reply**. Host exit criterion **NOT MET**. **Do not submit App Review.** |
+| **Verdict** | **Local-first App Review cut** (2026-11-11): ship **Remove background** (rembg AI) + **Enhance** (local classical fallback); **Remove Object hidden**. Host `image.edit` still CF **502** — not a ship blocker for this cut. Proceed to Console assets → `apps cut` → `submit-review` after smoke. |
 | **Phase** | Phase 0 rules verified. Phase 1 production proof **PARTIAL**. **Phase 2 polish shipped**. Listing renamed to **Reliclear**. **Phase 3 listing assets started** (logo + screenshot checklist; Console upload still manual). |
-| **Draft** | Nexus `[DRAFT] Reliclear` slug **`reliclear`** **id=726**, working **rev 4** (unchanged this session — docs only; no bundle/`app.json` push). Not cut. **Not submitted to App Review.** |
+| **Draft / Review** | slug **`reliclear`** id **726** — working **rev 5** pushed; **cut `0.1.0`** (version_id=2127); **`submit-review` → `pending_review`** (2026-11-11). Console logo/screenshots: upload `listing/reliclear-logo-256.png` + `listing/harness-v01-ready.png` / local-success shots if not already set. |
 | **CLI** | `@anna-ai/cli` **0.1.64** (upgraded from 0.1.61; app-schema dispatcher **0.33.0**) |
 | **Auth (fresh)** | `anna-app whoami` → **LOGGED IN** · host `https://anna.partners` · scopes `aps:dev` · PAT ~82d (loose-perms warning on Windows) |
 | **OS user (fresh)** | `akshay\aksha` |
@@ -23,7 +23,7 @@
 | **Forum escalate** | **POSTED** [#466/2](https://forum.anna.partners/t/image-edit-returns-http-502-cloudflare-bad-gateway-for-every-call-from-nookflip/466/2) by @Akshay (2026-11-05 ~02:00 UTC). @Tralse replied ~15:48 UTC (same 502; using `image.generate`+reference workaround). **No staff reply yet.** |
 | **Commit state** | Branch `feature/anna-app-slim` @ `a6b06cd` (same tip as `main`). Anna App work is **local / uncommitted** relative to that tip; **no commit requested / none made**. |
 
-**One-line:** Nov 11 ~17:44 UTC Enhance host still **CF 502 HTML** (Ray `a58f1a4069b08bdf`); recovered **NO**. Forum #466 still no staff. **Do not App Review.**
+**One-line:** Local-first v0.1 — BG remove + Enhance only; host edit still 502; **App Review go** after rembg smoke + Console media.
 
 ---
 

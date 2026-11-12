@@ -74,7 +74,10 @@ MANIFEST = {
         },
         {
             "name": "remove_object",
-            "description": "Remove a described object/region from a photo URL via Anna host image.edit.",
+            "description": (
+                "Not available in Reliclear v0.1 App Review cut. "
+                "Use enhance_photo or remove_background instead until host image.edit recovers."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -175,9 +178,11 @@ def invoke(method: str, args: dict[str, Any], context: dict[str, Any] | None = N
                 "modes": [
                     {"id": "enhance", "label": "Enhance", "tool": "enhance_photo"},
                     {"id": "remove_bg", "label": "Remove background", "tool": "remove_background"},
-                    {"id": "remove_object", "label": "Remove object", "tool": "remove_object"},
                 ],
-                "ui_hint": "Prefer open_app_view('main') when the user needs to upload a local file.",
+                "ui_hint": (
+                    "Prefer open_app_view('main') when the user needs to upload a local file. "
+                    "Remove object is not available in this release."
+                ),
             },
         }
 
@@ -194,18 +199,13 @@ def invoke(method: str, args: dict[str, Any], context: dict[str, Any] | None = N
         return _edit_image(url, PROMPTS["remove_bg"], invoke_id)
 
     if method == "remove_object":
-        url = (args.get("image_url") or "").strip()
-        what = (args.get("what_to_remove") or "").strip()
-        if not url:
-            return {"success": False, "error": "image_url required"}
-        if not what:
-            return {"success": False, "error": "what_to_remove required"}
-        prompt = (
-            f"Remove the following from this photograph and inpaint the area so it looks "
-            f"natural and continuous with the surroundings: {what}. Preserve everything else. "
-            f"Photorealistic, no artifacts."
-        )
-        return _edit_image(url, prompt, invoke_id)
+        return {
+            "success": False,
+            "error": (
+                "remove_object is not available in this Reliclear release. "
+                "Use enhance_photo or remove_background instead."
+            ),
+        }
 
     return {"success": False, "error": f"unknown method: {method}"}
 

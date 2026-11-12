@@ -6,11 +6,16 @@ import test from "node:test";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const appJs = readFileSync(join(root, "bundle", "app.js"), "utf8");
+const indexHtml = readFileSync(join(root, "bundle", "index.html"), "utf8");
 
-test("bundle defines three edit modes", () => {
+test("bundle keeps three mode defs; UI ships only enhance + remove_bg", () => {
   assert.match(appJs, /enhance:/);
   assert.match(appJs, /remove_bg:/);
   assert.match(appJs, /remove_object:/);
+  assert.match(appJs, /SHIPPED_MODES\s*=\s*\["enhance",\s*"remove_bg"\]/);
+  assert.match(indexHtml, /data-mode="enhance"/);
+  assert.match(indexHtml, /data-mode="remove_bg"/);
+  assert.doesNotMatch(indexHtml, /data-mode="remove_object"/);
 });
 
 test("enhance prompt asks to preserve identity", () => {
@@ -21,7 +26,7 @@ test("remove_bg prompt asks for transparent PNG", () => {
   assert.match(appJs, /transparent PNG/);
 });
 
-test("remove_object builds prompt from user text", () => {
+test("remove_object prompt helper retained for later unhide", () => {
   assert.match(appJs, /promptFor:\s*\(text\)\s*=>/);
   assert.match(appJs, /Remove the following from this photograph/);
 });
@@ -56,15 +61,12 @@ test("enhance falls back to local_enhance on host edit 502", () => {
   assert.match(appJs, /tool-dev-photo-enhancer-local/);
 });
 
-test("remove_bg may try local_remove_bg; remove_object does not fake success", () => {
+test("remove_bg may try local_remove_bg; remove_object not shipped", () => {
   assert.match(appJs, /local_remove_bg/);
   assert.match(appJs, /Done — background removed locally \(Anna photo-edit unavailable\)/);
   assert.match(appJs, /uv pip install \"rembg\[cpu\]\"/);
-  assert.match(appJs, /Describe what to remove — for example/);
-  assert.match(appJs, /Remove object needs Anna's photo-edit service/);
-  assert.match(appJs, /Try Enhance or Remove background instead/);
+  assert.match(appJs, /not available in this release/);
   assert.match(appJs, /no fake inpaint/);
-  assert.match(appJs, /Needs Anna photo-edit/);
 });
 
 test("Process button disabled while running", () => {
@@ -77,4 +79,8 @@ test("download affordance supports data URLs and host success copy", () => {
   assert.match(appJs, /a\.download\s*=/);
   assert.match(appJs, /You can download the result/);
   assert.match(appJs, /via Anna\. You can download the result/);
+});
+
+test("hero copy matches BG + enhance cut", () => {
+  assert.match(indexHtml, /AI background removal and photo enhance/);
 });

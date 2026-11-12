@@ -1,8 +1,8 @@
 {
   "name": "Reliclear",
   "slug": "reliclear",
-  "tagline": "Enhance photos, remove backgrounds, and erase objects — one tap on Anna.",
-  "description": "Reliclear is an Anna Marketplace photo editor: enhance clarity and color, remove the background, or remove a described object from one upload. Built on Anna host upload + image.edit (no local GPU). Chat tools let you #mention the app from conversation. While platform edit is unavailable, Enhance and Remove background can fall back to classical local tools (PIL / optional rembg); Remove object requires Anna photo-edit.",
+  "tagline": "AI background removal and photo enhance — one tap on Anna.",
+  "description": "Reliclear removes photo backgrounds with AI (rembg) and enhances clarity and color from one upload. Tries Anna host image.edit first; if platform photo-edit is unavailable, Remove background falls back to local rembg and Enhance falls back to classical local polish. Upload a photo in the App UI, process, preview, and download. Chat tools: enhance_photo and remove_background. Remove object is not included in this release.",
   "category": "creative",
   "bundled_executas": {
     "photo-enhancer": {

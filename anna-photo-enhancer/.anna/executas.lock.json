@@ -5,12 +5,12 @@
     "photo-enhancer": {
       "tool_id": "tool-akshay-photo-enhancer-72jdd7jk",
       "path": "./executas/photo-enhancer",
-      "source": "working"
+      "source": "cut"
     },
     "photo-enhancer-local": {
       "tool_id": "tool-akshay-photo-enhancer-local-cwgtd7ym",
       "path": "./executas/photo-enhancer-local",
-      "source": "working"
+      "source": "cut"
     }
   }
 }

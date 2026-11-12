@@ -70,7 +70,9 @@ def main() -> int:
 
     code, data, _ = run(["--invoke", "list_modes", "--args", "{}", "--no-image"])
     modes = ((data or {}).get("data") or {}).get("modes") or []
-    check("list_modes count", code == 0 and len(modes) == 3, str(modes))
+    mode_ids = {m.get("id") for m in modes}
+    check("list_modes count", code == 0 and len(modes) == 2, str(modes))
+    check("list_modes shipped ids", mode_ids == {"enhance", "remove_bg"}, str(mode_ids))
 
     cases = [
         (
@@ -84,12 +86,6 @@ def main() -> int:
             {"image_url": "https://example.com/a.png"},
             "mock-remove-bg",
             "Remove the background",
-        ),
-        (
-            "remove_object",
-            {"image_url": "https://example.com/a.png", "what_to_remove": "the red ball"},
-            "mock-remove-object",
-            "the red ball",
         ),
     ]
     for tool, args, model, needle in cases:
@@ -114,12 +110,17 @@ def main() -> int:
             "--invoke",
             "remove_object",
             "--args",
-            json.dumps({"image_url": "https://x", "what_to_remove": ""}),
+            json.dumps({"image_url": "https://x", "what_to_remove": "watermark"}),
             "--mock-image",
             MOCK,
         ]
     )
-    check("remove_object empty what", code == 0 and (data or {}).get("success") is False)
+    err = str((data or {}).get("error") or "")
+    check(
+        "remove_object unavailable in release",
+        code == 0 and (data or {}).get("success") is False and "not available" in err.lower(),
+        err,
+    )
 
     code, data, blob = run(
         [
