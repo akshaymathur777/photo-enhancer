@@ -12,7 +12,7 @@
 | --- | --- |
 | **Verdict** | **Local-first App Review cut** (2026-11-11): ship **Remove background** (rembg AI) + **Enhance** (local classical fallback); **Remove Object hidden**. Host `image.edit` still CF **502** — not a ship blocker for this cut. Proceed to Console assets → `apps cut` → `submit-review` after smoke. |
 | **Phase** | Phase 0 rules verified. Phase 1 production proof **PARTIAL**. **Phase 2 polish shipped**. Listing renamed to **Reliclear**. **Phase 3 listing assets started** (logo + screenshot checklist; Console upload still manual). |
-| **Draft / Review** | slug **`reliclear`** id **726** — working **rev 5** pushed; **cut `0.1.0`** (version_id=2127); **`submit-review` → `pending_review`** (2026-11-11). Console logo/screenshots: upload `listing/reliclear-logo-256.png` + `listing/harness-v01-ready.png` / local-success shots if not already set. |
+| **Draft / Review** | slug **`reliclear`** id **726** — working **rev 5**; **cut `0.1.0`** (version_id=2127); still **`PENDING_REVIEW`** (checked 2026-11-14). Console logo/screenshots: upload `listing/reliclear-logo-256.png` + `listing/harness-v01-ready.png` if missing (no CLI for media). |
 | **CLI** | `@anna-ai/cli` **0.1.64** (upgraded from 0.1.61; app-schema dispatcher **0.33.0**) |
 | **Auth (fresh)** | `anna-app whoami` → **LOGGED IN** · host `https://anna.partners` · scopes `aps:dev` · PAT ~82d (loose-perms warning on Windows) |
 | **OS user (fresh)** | `akshay\aksha` |
