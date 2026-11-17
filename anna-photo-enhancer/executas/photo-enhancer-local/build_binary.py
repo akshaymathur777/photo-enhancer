@@ -122,6 +122,17 @@ def main() -> int:
     staging = BUILD / "staging"
     staging.mkdir(parents=True)
 
+    meta_pkgs = [
+        "rembg",
+        "pymatting",
+        "pooch",
+        "onnxruntime",
+        "numpy",
+        "Pillow",
+        "opencv-python-headless",
+        "jsonschema",
+        "filetype",
+    ]
     cmd = [
         str(py),
         "-m",
@@ -155,8 +166,10 @@ def main() -> int:
         "sklearn",
         "--exclude-module",
         "pandas",
-        str(ROOT / "photo_enhancer_local_plugin.py"),
     ]
+    for pkg in meta_pkgs:
+        cmd.extend(["--copy-metadata", pkg])
+    cmd.append(str(ROOT / "photo_enhancer_local_plugin.py"))
     subprocess.check_call(cmd, cwd=ROOT)
 
     built = BUILD / "pyi" / exe_name
