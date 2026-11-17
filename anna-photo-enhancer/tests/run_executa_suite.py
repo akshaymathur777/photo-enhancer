@@ -52,7 +52,12 @@ def main() -> int:
         and '"model": EDIT_MODEL' in plugin_src,
     )
 
-    code, data, _ = run(["--describe"])
+    data = None
+    code = 1
+    for _ in range(3):
+        code, data, _ = run(["--describe"])
+        if code == 0 and data and (data.get("tools") or []):
+            break
     check("describe", code == 0 and data is not None and "tools" in (data or {}))
     tools = {t["name"] for t in (data or {}).get("tools", [])}
     check(
@@ -135,9 +140,23 @@ def main() -> int:
     err = str((data or {}).get("error") or "")
     check(
         "remove_object unavailable in release",
-        code == 0 and (data or {}).get("success") is False and "not available" in err.lower(),
+        code == 0
+        and (data or {}).get("success") is False
+        and "not available" in err.lower()
+        and "desktop-only" in err.lower(),
         err,
     )
+    # Re-describe for tool copy alignment with App UI.
+    _, desc, _ = run(["--describe"])
+    by_name = {t["name"]: t for t in (desc or {}).get("tools", [])}
+    enh_desc = (by_name.get("enhance_photo") or {}).get("description") or ""
+    check(
+        "enhance_photo mentions App UI",
+        "open_app_view" in enh_desc or "App UI" in enh_desc,
+        enh_desc,
+    )
+    ro_desc = (by_name.get("remove_object") or {}).get("description") or ""
+    check("remove_object describe is honest", "not available" in ro_desc.lower(), ro_desc)
 
     code, data, blob = run(
         [
