@@ -16,7 +16,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 ENTRY = "photo-enhancer"
 # Shim / archive identity must match the minted tool_id (Agent bin/ name).
 TOOL_ID = "tool-akshay-photo-enhancer-72jdd7jk"

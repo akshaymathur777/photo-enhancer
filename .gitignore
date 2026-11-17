@@ -37,6 +37,15 @@ dist/
 anna-photo-enhancer/executas/**/build/
 anna-photo-enhancer/executas/**/dist/
 anna-photo-enhancer/executas/**/.build-venv/
+anna-photo-enhancer/executas/**/models/
+anna-photo-enhancer/executas/**/.venv/
+
+# Local harness / Playwright chrome profiles (never commit)
+anna-photo-enhancer/.anna/shot-chrome/
+anna-photo-enhancer/.anna/smoke-chrome*/
+anna-photo-enhancer/.anna/smoke-local-modes.json
+anna-photo-enhancer/anna-photo-enhancer/
+anna-photo-enhancer/executas/**/models/*.onnx
 
 # OS
 .DS_Store
@@ -69,3 +78,9 @@ AIRBRUSH_*.md
 *_STRATEGY.md
 GITHUB_RELEASE_CHECKLIST.md
 AI_APP_OPPORTUNITIES.md
+
+# Anna harness Chromium profiles / smoke captures (never commit)
+anna-photo-enhancer/.anna/shot-chrome/
+anna-photo-enhancer/.anna/smoke-chrome*/
+anna-photo-enhancer/**/listing/_smoke-*.png
+anna-photo-enhancer/anna-photo-enhancer/

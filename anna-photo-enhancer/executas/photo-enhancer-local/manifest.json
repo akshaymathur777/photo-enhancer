@@ -1,6 +1,6 @@
 {
   "display_name": "Photo Enhancer Local",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "protocolVersion": "2.0",
   "tools": [
     {
@@ -22,6 +22,66 @@
       }
     },
     {
+      "name": "local_adjust",
+      "description": "PIL adjust: brightness/contrast/saturation/exposure/sharpness. Pass image_png_b64; factors default to 1.0.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "image_png_b64": { "type": "string" },
+          "brightness": { "type": "number", "default": 1.0 },
+          "contrast": { "type": "number", "default": 1.0 },
+          "saturation": { "type": "number", "default": 1.0 },
+          "exposure": { "type": "number", "default": 1.0 },
+          "sharpness": { "type": "number", "default": 1.0 }
+        },
+        "required": ["image_png_b64"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "local_style",
+      "description": "Apply a classical Look preset (cinematic, vintage, vivid, …). Pass image_png_b64 and style.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "image_png_b64": { "type": "string" },
+          "style": {
+            "type": "string",
+            "enum": [
+              "bw_dramatic",
+              "cinematic",
+              "cool_moody",
+              "faded",
+              "golden_hour",
+              "matte",
+              "punchy",
+              "sepia",
+              "soft_glow",
+              "vintage",
+              "vivid",
+              "warm_film"
+            ],
+            "default": "cinematic"
+          }
+        },
+        "required": ["image_png_b64"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "local_denoise",
+      "description": "OpenCV NLMeans denoise. Pass image_png_b64.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "image_png_b64": { "type": "string" },
+          "strength": { "type": "integer", "default": 10 }
+        },
+        "required": ["image_png_b64"],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "local_inpaint",
       "description": "OpenCV TELEA/NS inpaint. Pass RGB image + mask as PNG base64.",
       "parameters": {
@@ -37,7 +97,7 @@
     },
     {
       "name": "local_remove_bg",
-      "description": "Background removal via rembg. Pass image_png_b64.",
+      "description": "Background removal via rembg (lite u2netp baked into binary). Pass image_png_b64.",
       "parameters": {
         "type": "object",
         "properties": {

@@ -9,7 +9,7 @@ import uuid
 from typing import Any
 
 NAME = "tool-dev-photo-enhancer"
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 
 PROMPTS = {
     "enhance": (
@@ -44,7 +44,11 @@ MANIFEST = {
         },
         {
             "name": "enhance_photo",
-            "description": "Enhance an existing photo URL via Anna host image.edit.",
+            "description": (
+                "Enhance a photo URL via Anna host image.edit when the platform edit "
+                "gateway is healthy. For local files prefer open_app_view('main') — "
+                "the Reliclear UI uses local classical enhance (and Edit/Looks/Effects)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -59,7 +63,10 @@ MANIFEST = {
         },
         {
             "name": "remove_background",
-            "description": "Remove the background from a photo URL via Anna host image.edit.",
+            "description": (
+                "Remove background from a photo URL via Anna host image.edit when available. "
+                "For local files prefer open_app_view('main') — the UI uses local rembg (u2netp)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -75,8 +82,9 @@ MANIFEST = {
         {
             "name": "remove_object",
             "description": (
-                "Not available in Reliclear v0.1 App Review cut. "
-                "Use enhance_photo or remove_background instead until host image.edit recovers."
+                "Not available in this Reliclear release (desktop-only generative inpaint). "
+                "Do not claim it works. Prefer enhance_photo, remove_background, or "
+                "open_app_view('main') for Edit / Looks / Effects."
             ),
             "parameters": {
                 "type": "object",
@@ -178,13 +186,13 @@ def invoke(method: str, args: dict[str, Any], context: dict[str, Any] | None = N
                 "modes": [
                     {"id": "enhance", "label": "Enhance", "tool": "enhance_photo", "path": "local_or_host"},
                     {"id": "remove_bg", "label": "Remove background", "tool": "remove_background", "path": "local_or_host"},
+                    {"id": "adjust", "label": "Adjust", "tool": "local_adjust", "path": "local_or_ui"},
+                    {"id": "looks", "label": "Looks", "tool": "local_style", "path": "local_or_ui"},
+                    {"id": "denoise", "label": "Denoise", "tool": "local_denoise", "path": "local_or_ui"},
                     {"id": "crop", "label": "Crop", "path": "ui_canvas"},
                     {"id": "rotate", "label": "Rotate / Flip", "path": "ui_canvas"},
-                    {"id": "adjust", "label": "Adjust", "path": "ui_canvas"},
                     {"id": "sharpen", "label": "Sharpen", "path": "ui_canvas"},
-                    {"id": "denoise", "label": "Denoise", "path": "ui_canvas"},
                     {"id": "restore", "label": "Restore", "path": "ui_canvas"},
-                    {"id": "looks", "label": "Looks", "path": "ui_canvas"},
                     {"id": "blur", "label": "Blur", "path": "ui_canvas"},
                     {"id": "vignette", "label": "Vignette", "path": "ui_canvas"},
                     {"id": "grain", "label": "Grain", "path": "ui_canvas"},
@@ -193,7 +201,8 @@ def invoke(method: str, args: dict[str, Any], context: dict[str, Any] | None = N
                 "ui_hint": (
                     "Prefer open_app_view('main') so the user can upload a local file. "
                     "Enhance + Remove BG run via local Executa (host image.edit optional). "
-                    "Edit / Looks / Effects run in the App UI (browser canvas). "
+                    "Adjust / Looks / Denoise also have local Executa tools (local_adjust, "
+                    "local_style, local_denoise) for Agent chat; crop/effects remain UI canvas. "
                     "Remove object, Upscale (Real-ESRGAN), Portrait AI, Stamp, Batch, and "
                     "generative inpaint remain desktop-only in this release."
                 ),
@@ -226,8 +235,9 @@ def invoke(method: str, args: dict[str, Any], context: dict[str, Any] | None = N
         return {
             "success": False,
             "error": (
-                "remove_object is not available in this Reliclear release. "
-                "Use enhance_photo or remove_background instead."
+                "remove_object is not available in this Reliclear release "
+                "(desktop-only generative inpaint). Use enhance_photo, "
+                "remove_background, or open the Reliclear App UI for Edit / Looks / Effects."
             ),
         }
 

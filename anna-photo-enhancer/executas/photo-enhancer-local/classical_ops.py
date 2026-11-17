@@ -4,10 +4,55 @@ from __future__ import annotations
 
 import base64
 import io
+import shutil
+import sys
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
+
+
+def bundled_u2netp_candidates() -> list[Path]:
+    """Locations where the lite rembg weights may be baked for offline first-run."""
+    paths: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        root = Path(meipass)
+        paths.append(root / "models" / "u2netp.onnx")
+        paths.append(root / "u2netp.onnx")
+    here = Path(__file__).resolve().parent
+    paths.append(here / "models" / "u2netp.onnx")
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        paths.append(exe_dir / "models" / "u2netp.onnx")
+        paths.append(exe_dir / "u2netp.onnx")
+    return paths
+
+
+def seed_bundled_u2netp() -> str | None:
+    """Copy baked ``u2netp.onnx`` into rembg's model dir when present.
+
+    Avoids a flaky GitHub download on Cloud Agent / first Remove BG invoke.
+    Returns the path rembg should use, or None if nothing was bundled/seeded.
+    """
+    src = next((p for p in bundled_u2netp_candidates() if p.is_file()), None)
+    if src is None:
+        return None
+    try:
+        from rembg.sessions.u2netp import U2netpSession
+
+        existing = U2netpSession.resolve_existing("u2netp.onnx")
+        if existing and Path(existing).is_file():
+            return existing
+        dest_dir = Path(U2netpSession.model_dir())
+        dest = dest_dir / "u2netp.onnx"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        if not dest.is_file() or dest.stat().st_size != src.stat().st_size:
+            shutil.copy2(src, dest)
+        return str(dest)
+    except Exception:
+        return None
 
 
 def decode_image_b64(image_b64: str) -> Image.Image:
@@ -251,8 +296,9 @@ def inpaint_opencv(
 def remove_bg_rembg(image: Image.Image, model_key: str = "lite") -> Image.Image:
     """Optional rembg path — requires rembg + onnxruntime in the local env.
 
-    ``lite`` uses ``u2netp`` (~4MB) so first-run downloads stay small.
-    ``general`` / ``portrait`` use heavier BiRefNet checkpoints when installed.
+    ``lite`` uses ``u2netp`` (~4MB). Prefer a baked copy (see ``seed_bundled_u2netp``)
+    so Cloud Agent / first-run does not depend on GitHub downloads.
+    ``general`` / ``portrait`` use heavier checkpoints when installed.
     """
     from rembg import new_session, remove
 
@@ -261,7 +307,10 @@ def remove_bg_rembg(image: Image.Image, model_key: str = "lite") -> Image.Image:
         "general": "u2net",
         "portrait": "birefnet-portrait",
     }
-    model = model_map.get(model_key, model_map["lite"])
+    key = (model_key or "lite").lower().strip()
+    model = model_map.get(key, model_map["lite"])
+    if model == "u2netp":
+        seed_bundled_u2netp()
     session = new_session(model)
     out = remove(image.convert("RGBA"), session=session)
     return out if isinstance(out, Image.Image) else Image.open(io.BytesIO(out))

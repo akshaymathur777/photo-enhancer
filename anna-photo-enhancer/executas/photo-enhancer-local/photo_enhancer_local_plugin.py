@@ -10,7 +10,9 @@ from typing import Any
 import classical_ops as ops
 
 NAME = "tool-dev-photo-enhancer-local"
-VERSION = "0.1.4"
+VERSION = "0.1.5"
+
+_LOOK_ENUM = sorted(ops.list_looks())
 
 MANIFEST = {
     "display_name": "Photo Enhancer Local",
@@ -30,6 +32,59 @@ MANIFEST = {
                 "properties": {
                     "image_png_b64": {"type": "string"},
                     "strength": {"type": "number", "default": 1.0},
+                },
+                "required": ["image_png_b64"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "local_adjust",
+            "description": (
+                "PIL adjust: brightness/contrast/saturation/exposure/sharpness. "
+                "Pass image_png_b64; factors default to 1.0 (no change)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "image_png_b64": {"type": "string"},
+                    "brightness": {"type": "number", "default": 1.0},
+                    "contrast": {"type": "number", "default": 1.0},
+                    "saturation": {"type": "number", "default": 1.0},
+                    "exposure": {"type": "number", "default": 1.0},
+                    "sharpness": {"type": "number", "default": 1.0},
+                },
+                "required": ["image_png_b64"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "local_style",
+            "description": (
+                "Apply a classical Look preset (cinematic, vintage, vivid, …). "
+                "Pass image_png_b64 and style."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "image_png_b64": {"type": "string"},
+                    "style": {
+                        "type": "string",
+                        "enum": _LOOK_ENUM,
+                        "default": "cinematic",
+                    },
+                },
+                "required": ["image_png_b64"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "local_denoise",
+            "description": "OpenCV NLMeans denoise. Pass image_png_b64.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "image_png_b64": {"type": "string"},
+                    "strength": {"type": "integer", "default": 10},
                 },
                 "required": ["image_png_b64"],
                 "additionalProperties": False,
@@ -78,8 +133,12 @@ MANIFEST = {
 def _capabilities() -> dict[str, Any]:
     caps = {
         "enhance": True,
+        "adjust": True,
+        "style_looks": True,
+        "denoise": False,
         "inpaint_opencv": False,
         "remove_bg_rembg": False,
+        "looks": ops.list_looks(),
         "cuda": False,
         "notes": "Option B classical path. Generative CUDA (SDXL/PowerPaint) remains desktop-only for now.",
     }
@@ -87,6 +146,7 @@ def _capabilities() -> dict[str, Any]:
         import cv2  # noqa: F401
 
         caps["inpaint_opencv"] = True
+        caps["denoise"] = True
     except Exception as e:  # noqa: BLE001
         caps["opencv_error"] = str(e)
     try:
@@ -123,6 +183,48 @@ def invoke(method: str, args: dict[str, Any]) -> dict[str, Any]:
             return {
                 "success": True,
                 "data": ops.result_payload(out, {"engine": "classical_enhance", "strength": strength}),
+            }
+
+        if method == "local_adjust":
+            b64 = (args.get("image_png_b64") or "").strip()
+            if not b64:
+                return {"success": False, "error": "image_png_b64 required"}
+            params = {
+                "brightness": float(args.get("brightness", 1.0)),
+                "contrast": float(args.get("contrast", 1.0)),
+                "saturation": float(args.get("saturation", 1.0)),
+                "exposure": float(args.get("exposure", 1.0)),
+                "sharpness": float(args.get("sharpness", 1.0)),
+            }
+            img = ops.decode_image_b64(b64)
+            out = ops.adjust_image(img, **params)
+            return {
+                "success": True,
+                "data": ops.result_payload(out, {"engine": "classical_adjust", **params}),
+            }
+
+        if method == "local_style":
+            b64 = (args.get("image_png_b64") or "").strip()
+            if not b64:
+                return {"success": False, "error": "image_png_b64 required"}
+            style = str(args.get("style") or "cinematic")
+            img = ops.decode_image_b64(b64)
+            out = ops.apply_look(img, style=style)
+            return {
+                "success": True,
+                "data": ops.result_payload(out, {"engine": "classical_style", "style": style}),
+            }
+
+        if method == "local_denoise":
+            b64 = (args.get("image_png_b64") or "").strip()
+            if not b64:
+                return {"success": False, "error": "image_png_b64 required"}
+            strength = int(args.get("strength", 10))
+            img = ops.decode_image_b64(b64)
+            out = ops.denoise(img, strength=strength)
+            return {
+                "success": True,
+                "data": ops.result_payload(out, {"engine": "opencv_denoise", "strength": strength}),
             }
 
         if method == "local_inpaint":

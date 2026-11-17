@@ -16,10 +16,13 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 ENTRY = "photo-enhancer-local"
 TOOL_ID = "tool-akshay-photo-enhancer-local-cwgtd7ym"
 DIST = ROOT / "dist"
+MODELS = ROOT / "models"
+U2NETP_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
+U2NETP_MD5 = "8e83ca70e441ab06c318d82300c84806"
 _VENV_KEY = hashlib.sha1(f"{ROOT}-{platform.system()}-{platform.machine()}".encode("utf-8")).hexdigest()[:10]
 _TMP = Path(tempfile.gettempdir()) / f"anna-pyi-{ENTRY}-{_VENV_KEY}"
 VENV = _TMP / "venv"
@@ -74,6 +77,36 @@ def ensure_venv() -> Path:
     return py
 
 
+def ensure_u2netp() -> Path:
+    """Fetch the ~4.6MB lite rembg weights once for baking into the freeze."""
+    MODELS.mkdir(parents=True, exist_ok=True)
+    dest = MODELS / "u2netp.onnx"
+    if dest.is_file() and dest.stat().st_size > 1_000_000:
+        digest = hashlib.md5(dest.read_bytes()).hexdigest()
+        if digest == U2NETP_MD5:
+            return dest
+    # Prefer a machine-local rembg cache when offline CI already warmed it.
+    for cached in (
+        Path.home() / ".rembg" / "models" / "u2netp" / "u2netp.onnx",
+        Path.home() / ".u2net" / "u2netp.onnx",
+    ):
+        if cached.is_file() and cached.stat().st_size > 1_000_000:
+            shutil.copy2(cached, dest)
+            digest = hashlib.md5(dest.read_bytes()).hexdigest()
+            if digest == U2NETP_MD5:
+                return dest
+    import urllib.request
+
+    print(f"Downloading u2netp → {dest}")
+    with urllib.request.urlopen(U2NETP_URL, timeout=120) as resp:
+        data = resp.read()
+    digest = hashlib.md5(data).hexdigest()
+    if digest != U2NETP_MD5:
+        raise SystemExit(f"u2netp md5 mismatch: got {digest}, want {U2NETP_MD5}")
+    dest.write_bytes(data)
+    return dest
+
+
 def write_manifest(staging: Path, exe_name: str) -> None:
     (staging / "manifest.json").write_text(
         json.dumps(
@@ -117,6 +150,7 @@ def main() -> int:
     exe_name = f"{ENTRY}.exe" if key.startswith("windows") else ENTRY
 
     py = ensure_venv()
+    u2netp = ensure_u2netp()
 
     if BUILD.exists():
         shutil.rmtree(BUILD)
@@ -134,6 +168,8 @@ def main() -> int:
         "jsonschema",
         "filetype",
     ]
+    # PyInstaller --add-data uses OS path separator between src and dest-in-bundle.
+    add_data = f"{u2netp}{os.pathsep}models"
     cmd = [
         str(py),
         "-m",
@@ -155,6 +191,8 @@ def main() -> int:
         "rembg",
         "--collect-all",
         "onnxruntime",
+        "--add-data",
+        add_data,
         "--exclude-module",
         "torch",
         "--exclude-module",
@@ -180,6 +218,8 @@ def main() -> int:
         raise SystemExit(f"pyinstaller output missing under {BUILD / 'pyi'}")
 
     shutil.copy2(built, staging / exe_name)
+    # Also ship flat weights next to the entrypoint for non-_MEIPASS installs.
+    shutil.copy2(u2netp, staging / "u2netp.onnx")
     write_manifest(staging, exe_name)
     out = archive(staging, key)
     print(f"OK {out}")

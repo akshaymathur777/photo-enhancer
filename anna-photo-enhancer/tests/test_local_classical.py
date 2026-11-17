@@ -148,6 +148,31 @@ class LocalExecutaSmoke(unittest.TestCase):
         self.assertIn("image_png_b64", out["data"])
         self.assertEqual(out["data"]["engine"], "classical_enhance")
 
+    def test_local_adjust_and_style_via_executa(self):
+        adj = self._invoke(
+            "local_adjust",
+            {
+                "image_png_b64": _sample_png_b64(),
+                "brightness": 1.15,
+                "contrast": 1.1,
+                "saturation": 0.95,
+            },
+        )
+        self.assertTrue(adj.get("success"), adj)
+        self.assertEqual(adj["data"]["engine"], "classical_adjust")
+        style = self._invoke(
+            "local_style",
+            {"image_png_b64": _sample_png_b64(), "style": "sepia"},
+        )
+        self.assertTrue(style.get("success"), style)
+        self.assertEqual(style["data"]["engine"], "classical_style")
+        den = self._invoke(
+            "local_denoise",
+            {"image_png_b64": _sample_png_b64(), "strength": 8},
+        )
+        self.assertTrue(den.get("success"), den)
+        self.assertEqual(den["data"]["engine"], "opencv_denoise")
+
     def test_local_inpaint_via_executa(self):
         out = self._invoke(
             "local_inpaint",
@@ -163,6 +188,40 @@ class LocalExecutaSmoke(unittest.TestCase):
     def test_local_enhance_requires_image(self):
         out = self._invoke("local_enhance", {"image_png_b64": ""})
         self.assertFalse(out.get("success"))
+
+    def test_local_adjust_style_denoise_via_executa(self):
+        b64 = _sample_png_b64()
+        adj = self._invoke(
+            "local_adjust",
+            {"image_png_b64": b64, "brightness": 1.1, "contrast": 1.05},
+        )
+        self.assertTrue(adj.get("success"), adj)
+        self.assertEqual(adj["data"]["engine"], "classical_adjust")
+        style = self._invoke("local_style", {"image_png_b64": b64, "style": "vintage"})
+        self.assertTrue(style.get("success"), style)
+        self.assertEqual(style["data"]["engine"], "classical_style")
+        den = self._invoke("local_denoise", {"image_png_b64": b64, "strength": 6})
+        self.assertTrue(den.get("success"), den)
+        self.assertEqual(den["data"]["engine"], "opencv_denoise")
+
+    def test_seed_bundled_u2netp_copies_when_present(self):
+        try:
+            import rembg  # noqa: F401
+        except ImportError:
+            self.skipTest("rembg not installed")
+        cached = Path.home() / ".rembg" / "models" / "u2netp" / "u2netp.onnx"
+        if not cached.is_file():
+            self.skipTest("no local u2netp cache to bake from")
+        models = LOCAL / "models"
+        models.mkdir(parents=True, exist_ok=True)
+        baked = models / "u2netp.onnx"
+        if not baked.is_file():
+            import shutil
+
+            shutil.copy2(cached, baked)
+        seeded = ops.seed_bundled_u2netp()
+        self.assertIsNotNone(seeded)
+        self.assertTrue(Path(seeded).is_file())
 
 
 if __name__ == "__main__":

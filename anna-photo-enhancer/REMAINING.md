@@ -30,7 +30,7 @@ Shipped in Anna this pass (browser canvas + existing local enhance/rembg):
 
 ## Next packaging steps (optional)
 
-1. Rebuild `photo-enhancer-local` binaries (all platforms) with PIL `local_adjust` / `local_style` / OpenCV denoise for Agent chat tools.
+1. ~~Expose PIL `local_adjust` / `local_style` / OpenCV `local_denoise` as Agent chat tools~~ + bake `u2netp.onnx` into local freeze (seed rembg cache offline) — **done in source (local Executa 0.1.5)**; rebuild four-platform binaries + cut app **0.1.9** when CI artifacts land (leave pending **0.1.8** review alone unless Repair still fails after user reinstall).
 2. Mask-paint UI → `local_inpaint` for a non-generative eraser.
 3. Lite bokeh via rembg alpha + Gaussian when rembg is present.
 4. Revisit host `image.edit` for remove_object when Anna recovers the edit gateway.
