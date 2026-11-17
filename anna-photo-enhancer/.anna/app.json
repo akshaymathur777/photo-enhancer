@@ -1,15 +1,8 @@
 {
-  "name": "Reliclear",
+  "$schema": "anna-app-identity/v1",
+  "host": "https://anna.partners",
+  "app_id": 726,
   "slug": "reliclear",
-  "tagline": "AI background removal and photo enhance — one tap on Anna.",
-  "description": "Reliclear is a photo cleanup App for Anna that helps you turn everyday shots into clean, share-ready images without leaving chat.\n\nCore features:\n• Remove background — AI cutouts via rembg on the Agent, with a host image.edit path when the platform photo-edit API is available.\n• Enhance — improve clarity, color balance, and mild sharpening; uses host image.edit when healthy, otherwise a classical local polish on the Agent.\n• Upload → process → preview → download — pick a photo in the App UI, run a mode, compare the result, and save a PNG.\n• Chat tools — enhance_photo and remove_background for Agent-driven flows alongside the UI.\n\nThis release focuses on reliable background removal and enhance. Remove object is not included yet. Reliclear is built for both Cloud Agent (Linux) and desktop Agents, with bundled multi-platform Executa binaries so install works without a local Python setup.",
-  "category": "creative",
-  "bundled_executas": {
-    "photo-enhancer": {
-      "path": "./executas/photo-enhancer"
-    },
-    "photo-enhancer-local": {
-      "path": "./executas/photo-enhancer-local"
-    }
-  }
+  "handle": "akshay",
+  "first_published_at": "2026-11-17T10:07:37.643Z"
 }

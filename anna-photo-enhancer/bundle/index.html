@@ -17,7 +17,7 @@
         </div>
       </header>
 
-      <section class="panel">
+      <section class="panel controls">
         <div class="modes" role="group" aria-label="Edit mode">
           <button type="button" class="mode" data-mode="enhance" aria-pressed="true" title="Improve clarity, color, and detail">Enhance</button>
           <button type="button" class="mode" data-mode="remove_bg" aria-pressed="false" title="AI cutout of the subject; transparent when possible">Remove background</button>
@@ -32,13 +32,15 @@
         <input class="hidden-input" id="file-input" type="file" accept="image/jpeg,image/png,image/webp,image/*" />
 
         <div class="actions">
-          <button type="button" class="primary" id="run-btn" disabled>Process photo</button>
-          <button type="button" class="ghost" id="download-btn" disabled>Download result</button>
+          <div class="action-buttons">
+            <button type="button" class="primary" id="run-btn" disabled>Process photo</button>
+            <button type="button" class="ghost" id="download-btn" disabled>Download result</button>
+          </div>
           <div class="status" id="status">Connecting…</div>
         </div>
       </section>
 
-      <section class="panel compare">
+      <section class="panel compare" aria-label="Before and after preview">
         <div class="frame">
           <h2>Before</h2>
           <div class="stage" id="before-stage">
