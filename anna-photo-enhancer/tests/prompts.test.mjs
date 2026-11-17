@@ -84,3 +84,15 @@ test("download affordance supports data URLs and host success copy", () => {
 test("hero copy matches BG + enhance cut", () => {
   assert.match(indexHtml, /AI background removal and photo enhance/);
 });
+
+test("UI accepts HEIC/HEIF and converts before process", () => {
+  assert.match(indexHtml, /image\/heic/);
+  assert.match(indexHtml, /\.heic/);
+  assert.match(indexHtml, /JPG \/ PNG \/ WEBP \/ HEIC/);
+  assert.match(appJs, /function isAcceptedImageFile/);
+  assert.match(appJs, /function isHeicFile/);
+  assert.match(appJs, /function ensureProcessableImage/);
+  assert.match(appJs, /heic2any\.min\.js/);
+  assert.match(appJs, /Please choose an image file \(JPG, PNG, WEBP, or HEIC\)\./);
+  assert.match(appJs, /Converting HEIC to JPEG/);
+});

@@ -37,6 +37,9 @@ const LOCAL_TOOL_CANDIDATES = [
   "bundled:photo-enhancer-local",
   "photo-enhancer-local",
 ];
+const ACCEPTED_EXT = /\.(jpe?g|png|webp|hei[cf])$/i;
+const HEIC_MIME = /^image\/hei[cf]$/i;
+const HEIC_EXT = /\.hei[cf]$/i;
 
 function bytesToBase64(bytes) {
   let binary = "";
@@ -50,6 +53,136 @@ function bytesToBase64(bytes) {
 async function fileToBase64(file) {
   const buf = await file.arrayBuffer();
   return bytesToBase64(new Uint8Array(buf));
+}
+
+function fileNameLower(file) {
+  return String(file?.name || "").toLowerCase();
+}
+
+/** HEIC/HEIF by MIME or extension (Windows often leaves MIME empty). */
+function isHeicFile(file) {
+  if (!file) return false;
+  const type = String(file.type || "").toLowerCase();
+  if (HEIC_MIME.test(type)) return true;
+  return HEIC_EXT.test(fileNameLower(file));
+}
+
+/** Accept JPG/PNG/WEBP/HEIC even when the OS reports an empty MIME type. */
+function isAcceptedImageFile(file) {
+  if (!file) return false;
+  const type = String(file.type || "").toLowerCase();
+  if (type.startsWith("image/")) return true;
+  // Windows HEIC (and occasionally JPEG) often arrives as "" or octet-stream.
+  if (!type || type === "application/octet-stream") {
+    return ACCEPTED_EXT.test(fileNameLower(file));
+  }
+  return false;
+}
+
+let heic2anyLoader = null;
+
+/** Lazy-load vendored heic2any (UMD → window.heic2any) only when needed. */
+function loadHeic2Any() {
+  if (typeof window !== "undefined" && typeof window.heic2any === "function") {
+    return Promise.resolve(window.heic2any);
+  }
+  if (heic2anyLoader) return heic2anyLoader;
+  heic2anyLoader = new Promise((resolve, reject) => {
+    const existing = document.querySelector("script[data-reliclear-heic2any]");
+    if (existing) {
+      if (typeof window.heic2any === "function") {
+        resolve(window.heic2any);
+        return;
+      }
+      existing.addEventListener("load", () => {
+        if (typeof window.heic2any === "function") resolve(window.heic2any);
+        else reject(new Error("HEIC converter loaded but unavailable."));
+      });
+      existing.addEventListener("error", () =>
+        reject(new Error("Failed to load HEIC converter."))
+      );
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = new URL("./vendor/heic2any.min.js", import.meta.url).href;
+    script.async = true;
+    script.dataset.reliclearHeic2any = "1";
+    script.onload = () => {
+      if (typeof window.heic2any !== "function") {
+        reject(new Error("HEIC converter loaded but unavailable."));
+        return;
+      }
+      resolve(window.heic2any);
+    };
+    script.onerror = () => reject(new Error("Failed to load HEIC converter."));
+    document.head.appendChild(script);
+  }).catch((err) => {
+    heic2anyLoader = null;
+    throw err;
+  });
+  return heic2anyLoader;
+}
+
+async function bitmapToJpegFile(file) {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas unavailable for JPEG re-encode.");
+    ctx.drawImage(bitmap, 0, 0);
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error("JPEG encode failed."))),
+        "image/jpeg",
+        0.92
+      );
+    });
+    const base = String(file.name || "photo").replace(/\.[^.]+$/, "") || "photo";
+    return new File([blob], `${base}.jpg`, {
+      type: "image/jpeg",
+      lastModified: Date.now(),
+    });
+  } finally {
+    bitmap.close?.();
+  }
+}
+
+async function heicToJpegFile(file) {
+  const heic2any = await loadHeic2Any();
+  let converted = await heic2any({
+    blob: file,
+    toType: "image/jpeg",
+    quality: 0.92,
+  });
+  if (Array.isArray(converted)) converted = converted[0];
+  const base = String(file.name || "photo").replace(/\.hei[cf]$/i, "") || "photo";
+  return new File([converted], `${base}.jpg`, {
+    type: "image/jpeg",
+    lastModified: Date.now(),
+  });
+}
+
+/**
+ * Convert HEIC/HEIF → JPEG in the UI so host upload + local tools never see HEIC.
+ * Prefer native decode (Safari); otherwise use vendored heic2any (Chrome/Windows).
+ * Non-HEIC files pass through unchanged — no binary rebuild required.
+ */
+async function ensureProcessableImage(file) {
+  if (!isHeicFile(file)) return file;
+  try {
+    return await bitmapToJpegFile(file);
+  } catch {
+    /* Most Chromium builds cannot decode HEIC natively. */
+  }
+  try {
+    return await heicToJpegFile(file);
+  } catch {
+    throw new Error(
+      "Could not convert this HEIC photo. Try exporting as JPG or PNG, then upload again."
+    );
+  }
 }
 
 /** Re-encode any image File as PNG base64 for local classical tools. */
@@ -127,7 +260,7 @@ function formatHostError(err) {
     );
   }
   if (/APP_INVALID_REQUEST|unsupported.*(image|type|format)|mime/i.test(blob)) {
-    return "That image type is not supported. Try JPG, PNG, or WEBP.";
+    return "That image type is not supported. Try JPG, PNG, WEBP, or HEIC.";
   }
   if (/too large|oversized|payload|size.?limit|413\b/i.test(blob)) {
     return "That photo is too large. Try a smaller file (under ~8 MB works best).";
@@ -288,20 +421,44 @@ async function main() {
     if (modeHelp) modeHelp.textContent = MODES[mode].help;
   }
 
-  function pickFile(next) {
-    if (!next || !next.type.startsWith("image/")) {
-      setStatus(status, "Please choose an image file (JPG, PNG, or WEBP).", true);
+  async function pickFile(next) {
+    if (!isAcceptedImageFile(next)) {
+      setStatus(
+        status,
+        "Please choose an image file (JPG, PNG, WEBP, or HEIC).",
+        true
+      );
       return;
     }
-    file = next;
-    if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
-    localPreviewUrl = URL.createObjectURL(file);
-    setStage(beforeStage, localPreviewUrl, "Original");
-    setStage(afterStage, null, "Result appears here");
-    resultUrl = null;
+    runBtn.disabled = true;
     downloadBtn.disabled = true;
-    runBtn.disabled = !anna;
-    setStatus(status, `${file.name} · ${(file.size / 1024).toFixed(0)} KB ready.`);
+    try {
+      let ready = next;
+      if (isHeicFile(next)) {
+        setStatus(status, "Converting HEIC to JPEG…");
+        ready = await ensureProcessableImage(next);
+      }
+      file = ready;
+      if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
+      localPreviewUrl = URL.createObjectURL(file);
+      setStage(beforeStage, localPreviewUrl, "Original");
+      setStage(afterStage, null, "Result appears here");
+      resultUrl = null;
+      const note =
+        ready !== next ? " (converted from HEIC)" : "";
+      setStatus(
+        status,
+        `${file.name} · ${(file.size / 1024).toFixed(0)} KB ready.${note}`
+      );
+    } catch (e) {
+      file = null;
+      setStage(beforeStage, null, "No photo yet");
+      setStage(afterStage, null, "Result appears here");
+      resultUrl = null;
+      setStatus(status, formatHostError(e), true);
+    } finally {
+      runBtn.disabled = !file || !anna;
+    }
   }
 
   for (const btn of modeBtns) {
