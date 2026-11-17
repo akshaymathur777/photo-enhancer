@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tool-dev-photo-enhancer"
-version = "0.1.0"
+version = "0.1.2"
 description = "Photo Enhancer Executa — host image.edit tools for the Anna App"
 requires-python = ">=3.10"
 

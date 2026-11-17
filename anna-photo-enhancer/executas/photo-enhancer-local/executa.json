@@ -1,7 +1,7 @@
 {
   "slug": "photo-enhancer-local",
   "name": "Photo Enhancer Local",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "executa_type": "tool",
   "description": "Local classical enhance, OpenCV inpaint, and rembg background removal for Reliclear when host image.edit is unavailable.",
   "tool_id": "tool-dev-photo-enhancer-local",

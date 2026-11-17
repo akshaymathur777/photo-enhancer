@@ -112,8 +112,8 @@ jobs:
       - name: Create/Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: reliclear-executas-v0.1.1
-          name: Reliclear Executa binaries 0.1.1
+          tag_name: reliclear-executas-v0.1.2
+          name: Reliclear Executa binaries 0.1.2
           draft: false
           prerelease: true
           files: |
