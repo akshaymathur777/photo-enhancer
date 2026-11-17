@@ -97,7 +97,7 @@ def ensure_u2netp() -> Path:
                 return dest
     import urllib.request
 
-    print(f"Downloading u2netp → {dest}")
+    print(f"Downloading u2netp -> {dest}")
     with urllib.request.urlopen(U2NETP_URL, timeout=120) as resp:
         data = resp.read()
     digest = hashlib.md5(data).hexdigest()
