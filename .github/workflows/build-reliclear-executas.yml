@@ -19,7 +19,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          # macos-latest is Apple Silicon; macos-13 remains the Intel runner.
+          - os: macos-latest
             platform_key: darwin-arm64
           - os: macos-13
             platform_key: darwin-x86_64

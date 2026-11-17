@@ -19,9 +19,11 @@ ROOT = Path(__file__).resolve().parent
 VERSION = "0.1.1"
 ENTRY = "photo-enhancer-local"
 DIST = ROOT / "dist"
-BUILD = ROOT / "build"
-_VENV_KEY = hashlib.sha1(str(ROOT).encode("utf-8")).hexdigest()[:10]
-VENV = Path(tempfile.gettempdir()) / f"anna-pyi-{ENTRY}-{_VENV_KEY}"
+_VENV_KEY = hashlib.sha1(f"{ROOT}-{platform.system()}-{platform.machine()}".encode("utf-8")).hexdigest()[:10]
+_TMP = Path(tempfile.gettempdir()) / f"anna-pyi-{ENTRY}-{_VENV_KEY}"
+VENV = _TMP / "venv"
+# Keep PyInstaller worktrees off OneDrive / cross-OS mounts (parallel Windows+WSL races).
+BUILD = _TMP / "build"
 
 # Keep the freeze lean: rembg + classical deps only (no torch/transformers from host site-packages).
 DEPS = [
