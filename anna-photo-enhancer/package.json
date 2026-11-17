@@ -1,7 +1,7 @@
 {
   "name": "anna-photo-enhancer",
   "private": true,
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Anna Marketplace Reliclear — enhance, rembg, edit, looks, effects",
   "scripts": {
     "validate": "anna-app validate --strict",

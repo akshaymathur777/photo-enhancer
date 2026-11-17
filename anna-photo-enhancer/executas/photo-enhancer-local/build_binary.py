@@ -16,7 +16,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 ENTRY = "photo-enhancer-local"
 TOOL_ID = "tool-akshay-photo-enhancer-local-cwgtd7ym"
 DIST = ROOT / "dist"

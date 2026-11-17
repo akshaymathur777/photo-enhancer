@@ -10,7 +10,7 @@ from typing import Any
 import classical_ops as ops
 
 NAME = "tool-dev-photo-enhancer-local"
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 
 MANIFEST = {
     "display_name": "Photo Enhancer Local",
@@ -176,7 +176,9 @@ def main() -> None:
                     "serverInfo": {"name": NAME, "version": VERSION},
                 }
             elif method == "health":
-                result = {"status": "ready", "capabilities": _capabilities()}
+                # Keep this instant — Agent install/readiness probes time out if we
+                # import rembg/onnx/opencv here (frozen cold-start was ~50s).
+                result = {"status": "ready"}
             elif method == "invoke":
                 params = req.get("params") or {}
                 tool = params.get("tool") or params.get("name")
