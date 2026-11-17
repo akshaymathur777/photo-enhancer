@@ -9,7 +9,7 @@ import uuid
 from typing import Any
 
 NAME = "tool-dev-photo-enhancer"
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 
 PROMPTS = {
     "enhance": (
@@ -25,7 +25,7 @@ PROMPTS = {
 }
 
 MANIFEST = {
-    "name": NAME,
+    "display_name": "Photo Enhancer",
     "version": VERSION,
     "protocolVersion": "2.0",
     "client_capabilities": {

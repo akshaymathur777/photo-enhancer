@@ -10,10 +10,10 @@ from typing import Any
 import classical_ops as ops
 
 NAME = "tool-dev-photo-enhancer-local"
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 
 MANIFEST = {
-    "name": NAME,
+    "display_name": "Photo Enhancer Local",
     "version": VERSION,
     "protocolVersion": "2.0",
     "tools": [

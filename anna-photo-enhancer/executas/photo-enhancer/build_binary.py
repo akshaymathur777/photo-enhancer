@@ -16,8 +16,10 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 ENTRY = "photo-enhancer"
+# Shim / archive identity must match the minted tool_id (Agent bin/ name).
+TOOL_ID = "tool-akshay-photo-enhancer-72jdd7jk"
 DIST = ROOT / "dist"
 _VENV_KEY = hashlib.sha1(f"{ROOT}-{platform.system()}-{platform.machine()}".encode("utf-8")).hexdigest()[:10]
 _TMP = Path(tempfile.gettempdir()) / f"anna-pyi-{ENTRY}-{_VENV_KEY}"
@@ -68,7 +70,7 @@ def write_manifest(staging: Path, exe_name: str) -> None:
     (staging / "manifest.json").write_text(
         json.dumps(
             {
-                "name": ENTRY,
+                "name": TOOL_ID,
                 "version": VERSION,
                 "runtime": {"binary": {"entrypoint": exe_name}},
                 "permissions": {"executable": [exe_name]},
