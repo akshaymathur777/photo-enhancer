@@ -33,6 +33,10 @@ frontend/dist/
 build/
 dist/
 *.manifest
+.build-venv/
+anna-photo-enhancer/executas/**/build/
+anna-photo-enhancer/executas/**/dist/
+anna-photo-enhancer/executas/**/.build-venv/
 
 # OS
 .DS_Store

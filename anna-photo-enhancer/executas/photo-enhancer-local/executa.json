@@ -1,9 +1,44 @@
 {
   "slug": "photo-enhancer-local",
   "name": "Photo Enhancer Local",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "executa_type": "tool",
-  "description": "Option B classical CPU enhance / OpenCV inpaint / optional rembg. Runs on the Agent host (local binary path later).",
+  "description": "Local classical enhance, OpenCV inpaint, and rembg background removal for Reliclear when host image.edit is unavailable.",
   "tool_id": "tool-dev-photo-enhancer-local",
-  "type": "python"
+  "type": "python",
+  "distribution": {
+    "active": "binary",
+    "profiles": {
+      "local": {
+        "type": "local",
+        "supports_protocol": true
+      },
+      "binary": {
+        "type": "binary",
+        "supports_protocol": true,
+        "binary_artifacts": {
+          "darwin-arm64": {
+            "path": "dist/photo-enhancer-local-{version}-darwin-arm64.tar.gz",
+            "entrypoint": "photo-enhancer-local",
+            "format": "tar.gz"
+          },
+          "darwin-x86_64": {
+            "path": "dist/photo-enhancer-local-{version}-darwin-x86_64.tar.gz",
+            "entrypoint": "photo-enhancer-local",
+            "format": "tar.gz"
+          },
+          "linux-x86_64": {
+            "path": "dist/photo-enhancer-local-{version}-linux-x86_64.tar.gz",
+            "entrypoint": "photo-enhancer-local",
+            "format": "tar.gz"
+          },
+          "windows-x86_64": {
+            "path": "dist/photo-enhancer-local-{version}-windows-x86_64.zip",
+            "entrypoint": "photo-enhancer-local.exe",
+            "format": "zip"
+          }
+        }
+      }
+    }
+  }
 }

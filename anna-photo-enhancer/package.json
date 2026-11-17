@@ -1,7 +1,7 @@
 {
   "name": "anna-photo-enhancer",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Anna Marketplace Reliclear (Option A host APIs + Option B local classical)",
   "scripts": {
     "validate": "anna-app validate --strict",
