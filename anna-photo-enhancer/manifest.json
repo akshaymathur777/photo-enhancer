@@ -38,7 +38,7 @@
     ],
     "host_api": {
       "tools": [
-        "required:bundled:photo-enhancer-local",
+        "bundled:photo-enhancer-local",
         "bundled:photo-enhancer"
       ],
       "storage": ["get", "set", "delete", "list"],

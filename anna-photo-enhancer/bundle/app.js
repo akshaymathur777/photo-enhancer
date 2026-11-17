@@ -6,7 +6,7 @@ import { AnnaAppRuntime } from "/static/anna-apps/_sdk/latest/index.js";
 const MODES = {
   enhance: {
     label: "Enhance",
-    help: "Improve clarity, color, and detail (local polish if Anna photo-edit is down).",
+    help: "Improve clarity, color, and detail.",
     running: "Enhancing…",
     prompt:
       "Enhance this photograph: improve clarity, natural detail, color balance, and mild sharpening. Keep the subject, composition, and identity unchanged. Do not add or remove objects. Photorealistic output.",
@@ -32,14 +32,40 @@ const SHIPPED_MODES = ["enhance", "remove_bg"];
 const INLINE_SOFT_LIMIT = 7.5 * 1024 * 1024;
 // Forum #400 interim: GPT Image 2 edit route broken until ~2026-10-30 host rollout.
 const EDIT_MODEL = "fal-ai/nano-banana-2";
-const LOCAL_TOOL_CANDIDATES = [
-  "tool-dev-photo-enhancer-local",
-  "bundled:photo-enhancer-local",
-  "photo-enhancer-local",
-];
+/** Longest edge for HEIC→JPEG; matches typical enhance/upload size and speeds WASM decode. */
+const HEIC_MAX_EDGE = 2048;
+const JPEG_QUALITY = 0.85;
 const ACCEPTED_EXT = /\.(jpe?g|png|webp|hei[cf])$/i;
 const HEIC_MIME = /^image\/hei[cf]$/i;
 const HEIC_EXT = /\.hei[cf]$/i;
+
+/**
+ * Tool ids Anna ACL will accept for the required local executa.
+ * Prefer declared bundled/logical handles + published mint map; never lead with tool-dev-*.
+ */
+function localToolCandidates() {
+  const minted =
+    typeof window !== "undefined" &&
+    window.__ANNA_TOOL_IDS__ &&
+    window.__ANNA_TOOL_IDS__["photo-enhancer-local"];
+  const ids = [
+    "bundled:photo-enhancer-local",
+    "photo-enhancer-local",
+  ];
+  if (typeof minted === "string" && minted) ids.push(minted);
+  // Local harness only — must stay last so production never ACL-blocks on undeclared tool-dev-*.
+  ids.push("tool-dev-photo-enhancer-local");
+  return [...new Set(ids)];
+}
+
+function isToolUnavailableError(err) {
+  const msg = String(err?.message || "");
+  const code = String(err?.code || err?.name || "");
+  const blob = `${code} ${msg}`;
+  return /DENIED|NOT_FOUND|unknown|invalid.*tool|APP_NOT_GRANTED|ACL|not a declared|permission_denied/i.test(
+    blob
+  );
+}
 
 function bytesToBase64(bytes) {
   let binary = "";
@@ -80,6 +106,8 @@ function isAcceptedImageFile(file) {
 }
 
 let heic2anyLoader = null;
+/** Cache HEIC→JPEG by original File identity so preview + process never convert twice. */
+const heicJpegCache = new WeakMap();
 
 /** Lazy-load vendored heic2any (UMD → window.heic2any) only when needed. */
 function loadHeic2Any() {
@@ -123,23 +151,46 @@ function loadHeic2Any() {
   return heic2anyLoader;
 }
 
-async function bitmapToJpegFile(file) {
-  const bitmap = await createImageBitmap(file);
+/** Warm heic2any in the background so the first HEIC pick skips the ~1.3MB download wait. */
+function preloadHeic2Any() {
   try {
+    loadHeic2Any().catch(() => {});
+  } catch {
+    /* preload is best-effort */
+  }
+}
+
+function fitWithinMaxEdge(width, height, maxEdge = HEIC_MAX_EDGE) {
+  const w = Math.max(1, width | 0);
+  const h = Math.max(1, height | 0);
+  const longest = Math.max(w, h);
+  if (longest <= maxEdge) return { width: w, height: h };
+  const scale = maxEdge / longest;
+  return {
+    width: Math.max(1, Math.round(w * scale)),
+    height: Math.max(1, Math.round(h * scale)),
+  };
+}
+
+async function bitmapToJpegFile(source, nameHint) {
+  const bitmap = await createImageBitmap(source);
+  try {
+    const size = fitWithinMaxEdge(bitmap.width, bitmap.height);
     const canvas = document.createElement("canvas");
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
+    canvas.width = size.width;
+    canvas.height = size.height;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Canvas unavailable for JPEG re-encode.");
-    ctx.drawImage(bitmap, 0, 0);
+    ctx.drawImage(bitmap, 0, 0, size.width, size.height);
     const blob = await new Promise((resolve, reject) => {
       canvas.toBlob(
         (b) => (b ? resolve(b) : reject(new Error("JPEG encode failed."))),
         "image/jpeg",
-        0.92
+        JPEG_QUALITY
       );
     });
-    const base = String(file.name || "photo").replace(/\.[^.]+$/, "") || "photo";
+    const base =
+      String(nameHint || "photo").replace(/\.[^.]+$/, "") || "photo";
     return new File([blob], `${base}.jpg`, {
       type: "image/jpeg",
       lastModified: Date.now(),
@@ -150,38 +201,61 @@ async function bitmapToJpegFile(file) {
 }
 
 async function heicToJpegFile(file) {
-  const heic2any = await loadHeic2Any();
+  // Start script fetch immediately; decode + canvas downscale runs after.
+  const heic2anyPromise = loadHeic2Any();
+  const heic2any = await heic2anyPromise;
   let converted = await heic2any({
     blob: file,
     toType: "image/jpeg",
-    quality: 0.92,
+    quality: JPEG_QUALITY,
   });
   if (Array.isArray(converted)) converted = converted[0];
+  // heic2any returns full-res; downscale via canvas for faster encode + smaller uploads.
   const base = String(file.name || "photo").replace(/\.hei[cf]$/i, "") || "photo";
-  return new File([converted], `${base}.jpg`, {
-    type: "image/jpeg",
-    lastModified: Date.now(),
-  });
+  try {
+    return await bitmapToJpegFile(converted, base);
+  } catch {
+    return new File([converted], `${base}.jpg`, {
+      type: "image/jpeg",
+      lastModified: Date.now(),
+    });
+  }
 }
 
 /**
  * Convert HEIC/HEIF → JPEG in the UI so host upload + local tools never see HEIC.
  * Prefer native decode (Safari); otherwise use vendored heic2any (Chrome/Windows).
  * Non-HEIC files pass through unchanged — no binary rebuild required.
+ * Results are cached on the original File so pick + process never convert twice.
  */
 async function ensureProcessableImage(file) {
   if (!isHeicFile(file)) return file;
+  const cached = heicJpegCache.get(file);
+  if (cached) return cached;
+
+  const converting = (async () => {
+    try {
+      return await bitmapToJpegFile(file, file.name);
+    } catch {
+      /* Most Chromium builds cannot decode HEIC natively. */
+    }
+    try {
+      return await heicToJpegFile(file);
+    } catch {
+      throw new Error(
+        "Could not convert this HEIC photo. Try exporting as JPG or PNG, then upload again."
+      );
+    }
+  })();
+
+  heicJpegCache.set(file, converting);
   try {
-    return await bitmapToJpegFile(file);
-  } catch {
-    /* Most Chromium builds cannot decode HEIC natively. */
-  }
-  try {
-    return await heicToJpegFile(file);
-  } catch {
-    throw new Error(
-      "Could not convert this HEIC photo. Try exporting as JPG or PNG, then upload again."
-    );
+    const ready = await converting;
+    heicJpegCache.set(file, ready);
+    return ready;
+  } catch (err) {
+    heicJpegCache.delete(file);
+    throw err;
   }
 }
 
@@ -304,21 +378,19 @@ async function invokeLocalTool(anna, method, args) {
     throw new Error("Local tools.invoke is not available in this host.");
   }
   let lastErr = null;
-  for (const tool_id of LOCAL_TOOL_CANDIDATES) {
+  for (const tool_id of localToolCandidates()) {
     try {
       const out = await anna.tools.invoke({ tool_id, method, args });
       if (out && out.success === false) {
         lastErr = new Error(out.error || `${method} failed`);
+        // Undeclared/ACL rejects often arrive as success:false — try next handle.
         continue;
       }
       return out;
     } catch (e) {
       lastErr = e;
-      const msg = String(e?.message || e?.code || e);
-      // Try next tool_id spelling on ACL / unknown-tool rejects.
-      if (/DENIED|NOT_FOUND|unknown|invalid.*tool|APP_NOT_GRANTED|ACL/i.test(msg)) {
-        continue;
-      }
+      // Try next declared/minted id on ACL / unknown-tool rejects.
+      if (isToolUnavailableError(e)) continue;
       throw e;
     }
   }
@@ -435,7 +507,10 @@ async function main() {
     try {
       let ready = next;
       if (isHeicFile(next)) {
-        setStatus(status, "Converting HEIC to JPEG…");
+        setStatus(
+          status,
+          "Converting HEIC to JPEG… (large iPhone photos can take a few seconds)"
+        );
         ready = await ensureProcessableImage(next);
       }
       file = ready;
@@ -491,6 +566,9 @@ async function main() {
     downloadResult(resultUrl, mode);
   });
 
+  // Prefetch HEIC WASM while connecting so first HEIC pick is not cold-start.
+  preloadHeic2Any();
+
   try {
     anna = await AnnaAppRuntime.connect();
     setStatus(status, "Ready — upload a photo to begin.");
@@ -525,9 +603,71 @@ async function main() {
 
     runBtn.disabled = true;
     downloadBtn.disabled = true;
-    setStatus(status, "Uploading photo…");
 
     try {
+      // Required local executa first (declared in manifest). Host image.edit is optional.
+      if (mode === "enhance" || mode === "remove_bg") {
+        const localMethod = mode === "enhance" ? "local_enhance" : "local_remove_bg";
+        const localArgs =
+          mode === "enhance"
+            ? { strength: 1.0 }
+            : { model_key: "lite" };
+        try {
+          setStatus(
+            status,
+            mode === "enhance"
+              ? "Enhancing locally…"
+              : "Removing background locally…"
+          );
+          const image_png_b64 = await fileToPngBase64(file);
+          const localOut = await invokeLocalTool(anna, localMethod, {
+            image_png_b64,
+            ...localArgs,
+          });
+          const pngB64 = extractLocalPngB64(localOut);
+          if (pngB64) {
+            resultUrl = `data:image/png;base64,${pngB64}`;
+            setStage(afterStage, resultUrl, "Result");
+            downloadBtn.disabled = false;
+            try {
+              await anna.storage.set({
+                key: "photo-enhancer:last",
+                value: {
+                  mode,
+                  at: Date.now(),
+                  path: localMethod,
+                  engine:
+                    localOut?.data?.engine ||
+                    (mode === "enhance" ? "classical_enhance" : "rembg"),
+                },
+              });
+            } catch {
+              /* storage is best-effort */
+            }
+            setStatus(
+              status,
+              mode === "enhance"
+                ? "Done — enhanced locally. You can download the result."
+                : "Done — background removed locally. You can download the result."
+            );
+            return;
+          }
+        } catch (localErr) {
+          const detail = String(localErr?.message || localErr || "");
+          if (
+            mode === "remove_bg" &&
+            /rembg|No module named|not installed|ImportError|onnxruntime/i.test(detail)
+          ) {
+            // Fall through to optional host edit; if that also fails, surface rembg hint.
+          } else if (!isToolUnavailableError(localErr) && !isHostEditUnavailable(localErr)) {
+            // Real local failure (not "tool missing") — still try optional host before giving up.
+          }
+          // Continue to optional host image.edit below.
+          setStatus(status, "Local tool unavailable — trying Anna photo-edit…");
+        }
+      }
+
+      setStatus(status, "Uploading photo…");
       const uploaded = await uploadImage(anna, file);
       const imageUrl = uploadUrl(uploaded);
       if (!imageUrl) throw new Error("Upload succeeded but no download URL was returned.");
@@ -542,95 +682,18 @@ async function main() {
           model: EDIT_MODEL,
         });
       } catch (editErr) {
-        if (!isHostEditUnavailable(editErr)) throw editErr;
-
-        // Host edit 502 / provider outage — graceful local classical fallback.
-        if (mode === "enhance") {
-          setStatus(status, "Host edit unavailable — trying local classical enhance…");
-          const image_png_b64 = await fileToPngBase64(file);
-          const localOut = await invokeLocalTool(anna, "local_enhance", {
-            image_png_b64,
-            strength: 1.0,
-          });
-          const pngB64 = extractLocalPngB64(localOut);
-          if (!pngB64) throw new Error("Local enhance returned no image.");
-          resultUrl = `data:image/png;base64,${pngB64}`;
-          setStage(afterStage, resultUrl, "Result");
-          downloadBtn.disabled = false;
-          try {
-            await anna.storage.set({
-              key: "photo-enhancer:last",
-              value: {
-                mode,
-                at: Date.now(),
-                path: "local_enhance",
-                engine: localOut?.data?.engine || "classical_enhance",
-              },
-            });
-          } catch {
-            /* storage is best-effort */
-          }
-          setStatus(
-            status,
-            "Done — enhanced locally (Anna photo-edit unavailable). You can download the result."
+        if (mode === "remove_bg" && isHostEditUnavailable(editErr)) {
+          throw new Error(
+            "Platform image edit is temporarily unavailable, and local rembg is not available. " +
+              'Install with: uv pip install "rembg[cpu]" in executas/photo-enhancer-local'
           );
-          return;
         }
-
-        if (mode === "remove_bg") {
-          // Optional rembg path — succeed if installed; else clear platform + rembg hint.
-          let localErr = null;
-          try {
-            setStatus(status, "Host edit unavailable — trying local remove background…");
-            const image_png_b64 = await fileToPngBase64(file);
-            const localOut = await invokeLocalTool(anna, "local_remove_bg", {
-              image_png_b64,
-              model_key: "lite",
-            });
-            const pngB64 = extractLocalPngB64(localOut);
-            if (pngB64) {
-              resultUrl = `data:image/png;base64,${pngB64}`;
-              setStage(afterStage, resultUrl, "Result");
-              downloadBtn.disabled = false;
-              try {
-                await anna.storage.set({
-                  key: "photo-enhancer:last",
-                  value: {
-                    mode,
-                    at: Date.now(),
-                    path: "local_remove_bg",
-                    engine: localOut?.data?.engine || "rembg",
-                  },
-                });
-              } catch {
-                /* storage is best-effort */
-              }
-              setStatus(
-                status,
-                "Done — background removed locally (Anna photo-edit unavailable). You can download the result."
-              );
-              return;
-            }
-            localErr = new Error(
-              localOut?.error || "Local remove_bg returned no image."
-            );
-          } catch (e) {
-            localErr = e;
-          }
-          const detail = String(localErr?.message || localErr || "");
-          if (/rembg|No module named|not installed|ImportError|onnxruntime/i.test(detail)) {
-            throw new Error(
-              "Platform image edit is temporarily unavailable, and local rembg is not available. " +
-                'Install with: uv pip install "rembg[cpu]" in executas/photo-enhancer-local'
-            );
-          }
-          throw editErr;
+        if (isHostEditUnavailable(editErr)) {
+          throw new Error(
+            "Local Reliclear tools and Anna photo-edit are both unavailable right now. Please try again later."
+          );
         }
-
-        // Unshipped modes (e.g. remove_object): no fake inpaint.
-        throw new Error(
-          "This mode is not available in this release. Try Enhance or Remove background."
-        );
+        throw editErr;
       }
 
       const images = edited.images || [];

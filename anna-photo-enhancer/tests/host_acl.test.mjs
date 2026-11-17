@@ -94,8 +94,7 @@ test("mountBundle allows storage.set; chat ACL depends on schema era", async () 
 });
 
 test("tools.invoke for bundled handle is ACL-allowed (via required_executas fallback)", async () => {
-  // deriveAcl strips "bundled:" prefix into allowedTools as "photo-enhancer"
-  // and also adds required_executas tool_ids. Our required entry is bundled:photo-enhancer.
+  // Required local executa is bundled:photo-enhancer-local; host photo-enhancer is optional.
   const h = await mountBundle({
     manifest,
     mocks: {
@@ -107,7 +106,6 @@ test("tools.invoke for bundled handle is ACL-allowed (via required_executas fall
     },
   });
 
-  // Bare tool-dev id used at runtime by local harness mapping
   const deniedOrOk = async (toolId) => {
     try {
       const out = await h.runtime.tools.invoke({
@@ -121,11 +119,21 @@ test("tools.invoke for bundled handle is ACL-allowed (via required_executas fall
     }
   };
 
-  const bundled = await deniedOrOk("bundled:photo-enhancer");
-  // ACL stores bare id after split — "photo-enhancer" — so full "bundled:..." may deny.
-  const bare = await deniedOrOk("photo-enhancer");
+  const bundledLocal = await deniedOrOk("bundled:photo-enhancer-local");
+  const bareLocal = await deniedOrOk("photo-enhancer-local");
   assert.ok(
-    bundled.ok || bare.ok,
-    `expected one tool id allowed; bundled=${JSON.stringify(bundled)} bare=${JSON.stringify(bare)}`
+    bundledLocal.ok || bareLocal.ok,
+    `expected local tool id allowed; bundled=${JSON.stringify(bundledLocal)} bare=${JSON.stringify(bareLocal)}`
   );
+
+  const bundledHost = await deniedOrOk("bundled:photo-enhancer");
+  const bareHost = await deniedOrOk("photo-enhancer");
+  assert.ok(
+    bundledHost.ok || bareHost.ok,
+    `expected host tool id allowed; bundled=${JSON.stringify(bundledHost)} bare=${JSON.stringify(bareHost)}`
+  );
+
+  // Prefer declared handles: undeclared tool-dev may be DENIED on ACL-aware hosts.
+  // (Schema-era harnesses that retired host_api ACL may still mock-allow it.)
+  await deniedOrOk("tool-dev-photo-enhancer-local");
 });

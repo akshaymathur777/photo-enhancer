@@ -53,20 +53,29 @@ test("status maps 502 / APP_PROVIDER_ERROR to clear UX", () => {
   assert.match(appJs, /Enable grants for this app/);
 });
 
-test("enhance falls back to local_enhance on host edit 502", () => {
+test("enhance prefers declared local_enhance before optional host edit", () => {
   assert.match(appJs, /local_enhance/);
   assert.match(appJs, /fileToPngBase64/);
   assert.match(appJs, /invokeLocalTool/);
-  assert.match(appJs, /Done — enhanced locally \(Anna photo-edit unavailable\)/);
-  assert.match(appJs, /tool-dev-photo-enhancer-local/);
+  assert.match(appJs, /function localToolCandidates/);
+  assert.match(appJs, /bundled:photo-enhancer-local/);
+  assert.match(appJs, /Done — enhanced locally\. You can download the result\./);
+  // tool-dev id may exist as last-resort harness fallback only — never first candidate.
+  const candidatesBlock = appJs.match(
+    /function localToolCandidates\(\)[\s\S]*?^}/m
+  )?.[0] || "";
+  assert.match(candidatesBlock, /bundled:photo-enhancer-local/);
+  assert.match(candidatesBlock, /tool-dev-photo-enhancer-local/);
+  const bundledIdx = candidatesBlock.indexOf("bundled:photo-enhancer-local");
+  const devIdx = candidatesBlock.indexOf("tool-dev-photo-enhancer-local");
+  assert.ok(bundledIdx >= 0 && devIdx > bundledIdx, "tool-dev must be last resort");
 });
 
-test("remove_bg may try local_remove_bg; remove_object not shipped", () => {
+test("remove_bg prefers local_remove_bg; remove_object not shipped", () => {
   assert.match(appJs, /local_remove_bg/);
-  assert.match(appJs, /Done — background removed locally \(Anna photo-edit unavailable\)/);
+  assert.match(appJs, /Done — background removed locally\. You can download the result\./);
   assert.match(appJs, /uv pip install \"rembg\[cpu\]\"/);
   assert.match(appJs, /not available in this release/);
-  assert.match(appJs, /no fake inpaint/);
 });
 
 test("Process button disabled while running", () => {
@@ -92,7 +101,21 @@ test("UI accepts HEIC/HEIF and converts before process", () => {
   assert.match(appJs, /function isAcceptedImageFile/);
   assert.match(appJs, /function isHeicFile/);
   assert.match(appJs, /function ensureProcessableImage/);
+  assert.match(appJs, /function preloadHeic2Any/);
+  assert.match(appJs, /HEIC_MAX_EDGE/);
   assert.match(appJs, /heic2any\.min\.js/);
   assert.match(appJs, /Please choose an image file \(JPG, PNG, WEBP, or HEIC\)\./);
   assert.match(appJs, /Converting HEIC to JPEG/);
+});
+
+test("enhance mode help does not mention local polish outage copy", () => {
+  assert.doesNotMatch(appJs, /local polish if Anna photo-edit is down/);
+  assert.match(appJs, /Improve clarity, color, and detail\./);
+});
+
+test("index loads anna-tool-ids before app module", () => {
+  assert.match(indexHtml, /anna-tool-ids\.js/);
+  const idsIdx = indexHtml.indexOf("anna-tool-ids.js");
+  const appIdx = indexHtml.indexOf("app.js");
+  assert.ok(idsIdx >= 0 && appIdx > idsIdx);
 });
