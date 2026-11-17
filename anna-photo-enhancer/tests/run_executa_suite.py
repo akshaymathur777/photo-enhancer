@@ -71,8 +71,25 @@ def main() -> int:
     code, data, _ = run(["--invoke", "list_modes", "--args", "{}", "--no-image"])
     modes = ((data or {}).get("data") or {}).get("modes") or []
     mode_ids = {m.get("id") for m in modes}
-    check("list_modes count", code == 0 and len(modes) == 2, str(modes))
-    check("list_modes shipped ids", mode_ids == {"enhance", "remove_bg"}, str(mode_ids))
+    expected = {
+        "enhance",
+        "remove_bg",
+        "crop",
+        "rotate",
+        "adjust",
+        "sharpen",
+        "denoise",
+        "restore",
+        "looks",
+        "blur",
+        "vignette",
+        "grain",
+        "prism",
+    }
+    check("list_modes count", code == 0 and len(modes) >= 13, str(modes))
+    check("list_modes shipped ids", expected.issubset(mode_ids), str(mode_ids))
+    deferred = ((data or {}).get("data") or {}).get("deferred") or []
+    check("list_modes deferred includes remove_object", "remove_object" in deferred, str(deferred))
 
     cases = [
         (

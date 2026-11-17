@@ -176,13 +176,37 @@ def invoke(method: str, args: dict[str, Any], context: dict[str, Any] | None = N
             "success": True,
             "data": {
                 "modes": [
-                    {"id": "enhance", "label": "Enhance", "tool": "enhance_photo"},
-                    {"id": "remove_bg", "label": "Remove background", "tool": "remove_background"},
+                    {"id": "enhance", "label": "Enhance", "tool": "enhance_photo", "path": "local_or_host"},
+                    {"id": "remove_bg", "label": "Remove background", "tool": "remove_background", "path": "local_or_host"},
+                    {"id": "crop", "label": "Crop", "path": "ui_canvas"},
+                    {"id": "rotate", "label": "Rotate / Flip", "path": "ui_canvas"},
+                    {"id": "adjust", "label": "Adjust", "path": "ui_canvas"},
+                    {"id": "sharpen", "label": "Sharpen", "path": "ui_canvas"},
+                    {"id": "denoise", "label": "Denoise", "path": "ui_canvas"},
+                    {"id": "restore", "label": "Restore", "path": "ui_canvas"},
+                    {"id": "looks", "label": "Looks", "path": "ui_canvas"},
+                    {"id": "blur", "label": "Blur", "path": "ui_canvas"},
+                    {"id": "vignette", "label": "Vignette", "path": "ui_canvas"},
+                    {"id": "grain", "label": "Grain", "path": "ui_canvas"},
+                    {"id": "prism", "label": "Prism", "path": "ui_canvas"},
                 ],
                 "ui_hint": (
-                    "Prefer open_app_view('main') when the user needs to upload a local file. "
-                    "Remove object is not available in this release."
+                    "Prefer open_app_view('main') so the user can upload a local file. "
+                    "Enhance + Remove BG run via local Executa (host image.edit optional). "
+                    "Edit / Looks / Effects run in the App UI (browser canvas). "
+                    "Remove object, Upscale (Real-ESRGAN), Portrait AI, Stamp, Batch, and "
+                    "generative inpaint remain desktop-only in this release."
                 ),
+                "deferred": [
+                    "remove_object",
+                    "upscale",
+                    "portrait",
+                    "stamp",
+                    "batch",
+                    "bokeh_ai",
+                    "replace_bg",
+                    "ai_repair",
+                ],
             },
         }
 

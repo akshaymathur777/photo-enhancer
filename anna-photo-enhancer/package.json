@@ -1,8 +1,8 @@
 {
   "name": "anna-photo-enhancer",
   "private": true,
-  "version": "0.1.3",
-  "description": "Anna Marketplace Reliclear (Option A host APIs + Option B local classical)",
+  "version": "0.1.7",
+  "description": "Anna Marketplace Reliclear — enhance, rembg, edit, looks, effects",
   "scripts": {
     "validate": "anna-app validate --strict",
     "test": "node --test tests/host_acl.test.mjs tests/prompts.test.mjs && python tests/run_executa_suite.py && python tests/test_local_classical.py",

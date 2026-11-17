@@ -12,16 +12,14 @@ Local assets for Developer Console logo / screenshot upload. **Not** bundled int
 | `harness-enhance-local-fallback.png` | Harness UI capture — Enhance **local** fallback success; acceptable store shot for v0.1 local-first cut |
 | `harness-v01-ready.png` | Fresh harness dashboard capture (2026-11-11) for Console screenshot upload |
 
-## Screenshot checklist (v0.1 local-first App Review)
+## Screenshot checklist (expanded editing cut)
 
 Capture from live harness (`anna-app dev`) or installed draft, desktop viewport (~1280×720 or Console guidance):
 
-1. **Hero / ready** — Reliclear brand + Enhance or Remove background selected + empty dropzone + Ready status  
-2. **Enhance success** — Before/After (local classical fallback OK while host edit is 502)  
-3. **Remove background success** — transparent/cutout After stage (local rembg OK)  
-4. Do **not** show Remove object (hidden in this release)
-
-Host-success shots can replace these later when `image.edit` recovers.
+1. **Hero / ready** — Reliclear brand + Clean/Edit/Looks/Effects categories + empty dropzone  
+2. **Enhance or Remove BG success** — Before/After (local classical / rembg OK)  
+3. **Edit or Looks** — Adjust/Crop or a Looks preset with Before/After  
+4. Do **not** claim Remove object / Upscale / Portrait (desktop-only; see `REMAINING.md`)
 
 ## Upload in Developer Console
 

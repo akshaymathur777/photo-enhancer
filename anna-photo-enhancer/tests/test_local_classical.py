@@ -48,6 +48,32 @@ class ClassicalOpsTests(unittest.TestCase):
         self.assertEqual(out.size, img.size)
         self.assertFalse(np.array_equal(np.asarray(out), np.asarray(img)))
 
+    def test_adjust_and_crop(self):
+        img = ops.decode_image_b64(_sample_png_b64())
+        adj = ops.adjust_image(img, brightness=1.2, contrast=1.1, saturation=0.9)
+        self.assertEqual(adj.size, img.size)
+        cropped = ops.crop_rotate(img, left=4, top=4, width=40, height=30, flip_h=True)
+        self.assertEqual(cropped.size, (40, 30))
+
+    def test_sharpen_denoise_restore_looks(self):
+        img = ops.decode_image_b64(_sample_png_b64())
+        sharp = ops.sharpen(img, amount=1.5)
+        self.assertEqual(sharp.size, img.size)
+        denoised = ops.denoise(img, strength=8)
+        self.assertEqual(denoised.size, img.size)
+        restored = ops.restore(img)
+        self.assertEqual(restored.size, img.size)
+        look = ops.apply_look(img, "sepia")
+        self.assertEqual(look.size, img.size)
+        self.assertIn("cinematic", ops.list_looks())
+
+    def test_effects(self):
+        img = ops.decode_image_b64(_sample_png_b64())
+        self.assertEqual(ops.apply_blur(img, 3).size, img.size)
+        self.assertEqual(ops.apply_vignette(img, 0.4).size, img.size)
+        self.assertEqual(ops.apply_grain(img, 0.05).size, img.size)
+        self.assertEqual(ops.apply_prism(img, 0.5).size, img.size)
+
     def test_inpaint_fills_mask(self):
         img = ops.decode_image_b64(_sample_png_b64())
         mask = ops.decode_image_b64(_mask_png_b64())

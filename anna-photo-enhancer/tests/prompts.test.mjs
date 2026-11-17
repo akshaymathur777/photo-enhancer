@@ -7,14 +7,20 @@ import test from "node:test";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const appJs = readFileSync(join(root, "bundle", "app.js"), "utf8");
 const indexHtml = readFileSync(join(root, "bundle", "index.html"), "utf8");
+const canvasOps = readFileSync(join(root, "bundle", "canvas_ops.js"), "utf8");
 
-test("bundle keeps three mode defs; UI ships only enhance + remove_bg", () => {
+test("bundle ships enhance, remove_bg, edit, looks, effects", () => {
   assert.match(appJs, /enhance:/);
   assert.match(appJs, /remove_bg:/);
   assert.match(appJs, /remove_object:/);
-  assert.match(appJs, /SHIPPED_MODES\s*=\s*\["enhance",\s*"remove_bg"\]/);
-  assert.match(indexHtml, /data-mode="enhance"/);
-  assert.match(indexHtml, /data-mode="remove_bg"/);
+  assert.match(appJs, /crop:/);
+  assert.match(appJs, /adjust:/);
+  assert.match(appJs, /looks:/);
+  assert.match(appJs, /SHIPPED_MODES\s*=\s*\[[\s\S]*"enhance"[\s\S]*"remove_bg"[\s\S]*"crop"/);
+  assert.match(indexHtml, /data-cat="clean"/);
+  assert.match(indexHtml, /data-cat="edit"/);
+  assert.match(indexHtml, /data-cat="looks"/);
+  assert.match(indexHtml, /data-cat="effects"/);
   assert.doesNotMatch(indexHtml, /data-mode="remove_object"/);
 });
 
@@ -60,7 +66,6 @@ test("enhance prefers declared local_enhance before optional host edit", () => {
   assert.match(appJs, /function localToolCandidates/);
   assert.match(appJs, /bundled:photo-enhancer-local/);
   assert.match(appJs, /Done — enhanced locally\. You can download the result\./);
-  // tool-dev id may exist as last-resort harness fallback only — never first candidate.
   const candidatesBlock = appJs.match(
     /function localToolCandidates\(\)[\s\S]*?^}/m
   )?.[0] || "";
@@ -71,11 +76,15 @@ test("enhance prefers declared local_enhance before optional host edit", () => {
   assert.ok(bundledIdx >= 0 && devIdx > bundledIdx, "tool-dev must be last resort");
 });
 
-test("remove_bg prefers local_remove_bg; remove_object not shipped", () => {
+test("remove_bg prefers local_remove_bg; canvas modes use browser ops", () => {
   assert.match(appJs, /local_remove_bg/);
   assert.match(appJs, /Done — background removed locally\. You can download the result\./);
   assert.match(appJs, /uv pip install \"rembg\[cpu\]\"/);
-  assert.match(appJs, /not available in this release/);
+  assert.match(appJs, /from \"\.\/canvas_ops\.js\"/);
+  assert.match(appJs, /engine:\s*"canvas"/);
+  assert.match(canvasOps, /export async function adjustImage/);
+  assert.match(canvasOps, /export async function cropImage/);
+  assert.match(canvasOps, /export async function applyLook/);
 });
 
 test("Process button disabled while running", () => {
@@ -90,8 +99,8 @@ test("download affordance supports data URLs and host success copy", () => {
   assert.match(appJs, /via Anna\. You can download the result/);
 });
 
-test("hero copy matches BG + enhance cut", () => {
-  assert.match(indexHtml, /AI background removal and photo enhance/);
+test("hero copy covers editing expansion", () => {
+  assert.match(indexHtml, /Photo cleanup and editing on Anna/);
 });
 
 test("UI accepts HEIC/HEIF and converts before process", () => {

@@ -14,18 +14,23 @@
       <header class="top">
         <div class="brand-block">
           <div class="brand">Reliclear</div>
-          <h1 class="hero">AI background removal and photo enhance</h1>
-          <p class="tag">Upload a photo, remove the background or enhance clarity, then download.</p>
+          <h1 class="hero">Photo cleanup and editing on Anna</h1>
+          <p class="tag">Enhance, remove background, crop, adjust, looks, and effects — then download.</p>
         </div>
       </header>
 
       <section class="panel controls">
-        <div class="modes" role="group" aria-label="Edit mode">
-          <button type="button" class="mode" data-mode="enhance" aria-pressed="true" title="Improve clarity, color, and detail">Enhance</button>
-          <button type="button" class="mode" data-mode="remove_bg" aria-pressed="false" title="AI cutout of the subject; transparent when possible">Remove background</button>
-          <!-- Remove object hidden for v0.1 App Review until host image.edit recovers -->
+        <div class="cats" role="tablist" aria-label="Tool category">
+          <button type="button" class="cat" data-cat="clean" aria-selected="true">Clean</button>
+          <button type="button" class="cat" data-cat="edit" aria-selected="false">Edit</button>
+          <button type="button" class="cat" data-cat="looks" aria-selected="false">Looks</button>
+          <button type="button" class="cat" data-cat="effects" aria-selected="false">Effects</button>
         </div>
+
+        <div class="modes" id="modes" role="group" aria-label="Edit mode"></div>
         <p class="mode-help" id="mode-help">Improve clarity, color, and detail.</p>
+
+        <div class="options" id="options" hidden></div>
 
         <label class="drop" id="drop" for="file-input">
           <strong>Upload photo</strong>

@@ -15,8 +15,8 @@
       "version": "latest"
     }
   ],
-  "tags": ["photo-enhancer", "image", "edit", "background-removal"],
-  "system_prompt_addendum": "Reliclear is installed. Open the App UI with open_app_view (view: main) so the user can upload and process. This release ships Enhance + Remove background via the local Agent Executa (rembg / classical polish); host image.edit is optional when available. Do not offer remove_object. Prefer App UI for local file upload. Explain which track you used.",
+  "tags": ["photo-enhancer", "image", "edit", "background-removal", "crop", "filters"],
+  "system_prompt_addendum": "Reliclear is installed. Open the App UI with open_app_view (view: main) so the user can upload and process. Shipped: Enhance + Remove background (local Executa; host image.edit optional), plus Edit (crop/rotate/adjust/sharpen/denoise/restore), Looks (12 presets), and Effects (blur/vignette/grain/prism) in the App UI. Do not claim remove_object, Real-ESRGAN upscale, portrait AI, stamp, or batch — those remain desktop-only. Prefer App UI for local file upload. Explain which track you used.",
   "user_message_prefix_template": "[Reliclear] {user_message}",
   "ui": {
     "bundle": {

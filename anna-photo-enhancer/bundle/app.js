@@ -1,33 +1,148 @@
-// Reliclear Option A — host upload + image.edit (no local CUDA).
+// Reliclear — local-first photo cleanup + browser Edit/Looks/Effects.
 import { AnnaAppRuntime } from "/static/anna-apps/_sdk/latest/index.js";
+import {
+  LOOKS,
+  adjustImage,
+  applyLook,
+  blurImage,
+  cropImage,
+  denoiseImage,
+  grainImage,
+  prismImage,
+  restoreImage,
+  sharpenImage,
+  transformGeometry,
+  vignetteImage,
+} from "./canvas_ops.js";
 
-// v0.1 App Review: UI ships Enhance + Remove background only.
-// remove_object kept for a later unhide when host image.edit recovers.
+const CATEGORIES = {
+  clean: ["enhance", "remove_bg"],
+  edit: ["crop", "rotate", "adjust", "sharpen", "denoise", "restore"],
+  looks: ["looks"],
+  effects: ["blur", "vignette", "grain", "prism"],
+};
+
 const MODES = {
   enhance: {
     label: "Enhance",
     help: "Improve clarity, color, and detail.",
     running: "Enhancing…",
+    engine: "local_or_host",
     prompt:
       "Enhance this photograph: improve clarity, natural detail, color balance, and mild sharpening. Keep the subject, composition, and identity unchanged. Do not add or remove objects. Photorealistic output.",
   },
   remove_bg: {
-    label: "Remove background",
+    label: "Remove BG",
     help: "AI cutout of the subject; transparent when possible.",
     running: "Removing background…",
+    engine: "local_or_host",
     prompt:
       "Remove the background completely. Keep the main subject with clean edges. Output a transparent PNG when possible; otherwise a clean cutout on a plain white background. Do not alter the subject.",
   },
+  crop: {
+    label: "Crop",
+    help: "Trim edges with the sliders, then Process.",
+    running: "Cropping…",
+    engine: "canvas",
+  },
+  rotate: {
+    label: "Rotate / Flip",
+    help: "Rotate or flip instantly — updates the working photo.",
+    running: "Transforming…",
+    engine: "canvas_instant",
+  },
+  adjust: {
+    label: "Adjust",
+    help: "Brightness, contrast, saturation, exposure, sharpness.",
+    running: "Adjusting…",
+    engine: "canvas",
+  },
+  sharpen: {
+    label: "Sharpen",
+    help: "Crisp detail with unsharp masking.",
+    running: "Sharpening…",
+    engine: "canvas",
+  },
+  denoise: {
+    label: "Denoise",
+    help: "Soft noise reduction (browser lite).",
+    running: "Denoising…",
+    engine: "canvas",
+  },
+  restore: {
+    label: "Restore",
+    help: "Denoise + sharpen for older or soft shots.",
+    running: "Restoring…",
+    engine: "canvas",
+  },
+  looks: {
+    label: "Looks",
+    help: "Apply a classical look preset (browser).",
+    running: "Applying look…",
+    engine: "canvas",
+  },
+  blur: {
+    label: "Blur",
+    help: "Global soft blur.",
+    running: "Blurring…",
+    engine: "canvas",
+  },
+  vignette: {
+    label: "Vignette",
+    help: "Darken the edges.",
+    running: "Applying vignette…",
+    engine: "canvas",
+  },
+  grain: {
+    label: "Grain",
+    help: "Add subtle film grain.",
+    running: "Adding grain…",
+    engine: "canvas",
+  },
+  prism: {
+    label: "Prism",
+    help: "Rainbow refraction shift.",
+    running: "Applying prism…",
+    engine: "canvas",
+  },
+  // Kept for host-prompt compatibility / later unhide (desktop SAM+SDXL).
   remove_object: {
     label: "Remove object",
-    help: "Not available in this release — needs Anna photo-edit.",
+    help: "Desktop-only for now — needs generative inpaint models.",
     running: "Removing object…",
+    engine: "deferred",
     promptFor: (text) =>
       `Remove the following from this photograph and inpaint the area so it looks natural and continuous with the surroundings: ${text}. Preserve everything else. Photorealistic, no artifacts.`,
   },
 };
 
-const SHIPPED_MODES = ["enhance", "remove_bg"];
+const SHIPPED_MODES = [
+  "enhance",
+  "remove_bg",
+  "crop",
+  "rotate",
+  "adjust",
+  "sharpen",
+  "denoise",
+  "restore",
+  "looks",
+  "blur",
+  "vignette",
+  "grain",
+  "prism",
+];
+
+const DEFAULT_OPTS = {
+  crop: { left: 0.05, top: 0.05, right: 0.05, bottom: 0.05 },
+  adjust: { brightness: 1, contrast: 1, saturation: 1, exposure: 1, sharpness: 1 },
+  sharpen: { amount: 1.5 },
+  denoise: { strength: 10 },
+  looks: { style: "cinematic" },
+  blur: { radius: 8 },
+  vignette: { strength: 0.5 },
+  grain: { amount: 0.04 },
+  prism: { strength: 0.6 },
+};
 
 const INLINE_SOFT_LIMIT = 7.5 * 1024 * 1024;
 // Forum #400 interim: GPT Image 2 edit route broken until ~2026-10-30 host rollout.
@@ -467,6 +582,42 @@ function downloadResult(url, mode) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Could not read result file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function runCanvasMode(mode, file, opts) {
+  switch (mode) {
+    case "crop":
+      return cropImage(file, opts.crop);
+    case "adjust":
+      return adjustImage(file, opts.adjust);
+    case "sharpen":
+      return sharpenImage(file, opts.sharpen.amount);
+    case "denoise":
+      return denoiseImage(file, opts.denoise.strength);
+    case "restore":
+      return restoreImage(file);
+    case "looks":
+      return applyLook(file, opts.looks.style);
+    case "blur":
+      return blurImage(file, opts.blur.radius);
+    case "vignette":
+      return vignetteImage(file, opts.vignette.strength);
+    case "grain":
+      return grainImage(file, opts.grain.amount);
+    case "prism":
+      return prismImage(file, opts.prism.strength);
+    default:
+      throw new Error(`Unknown canvas mode: ${mode}`);
+  }
+}
+
 async function main() {
   const status = document.getElementById("status");
   const drop = document.getElementById("drop");
@@ -476,21 +627,230 @@ async function main() {
   const beforeStage = document.getElementById("before-stage");
   const afterStage = document.getElementById("after-stage");
   const modeHelp = document.getElementById("mode-help");
-  const modeBtns = [...document.querySelectorAll(".mode")].filter((btn) =>
-    SHIPPED_MODES.includes(btn.dataset.mode)
-  );
+  const modesEl = document.getElementById("modes");
+  const optionsEl = document.getElementById("options");
+  const catBtns = [...document.querySelectorAll(".cat")];
 
   let anna = null;
+  let category = "clean";
   let mode = "enhance";
   let file = null;
   let localPreviewUrl = null;
   let resultUrl = null;
+  let opts = structuredClone(DEFAULT_OPTS);
+  /** Canvas-only modes work without Anna host; enhance/rembg need tools.invoke. */
+  let hostOptional = false;
+
+  function canProcess() {
+    if (!file) return false;
+    const eng = MODES[mode]?.engine;
+    if (eng === "canvas" || eng === "canvas_instant") return true;
+    return Boolean(anna);
+  }
+
+  function renderModes() {
+    const ids = CATEGORIES[category] || [];
+    modesEl.replaceChildren();
+    for (const id of ids) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "mode";
+      btn.dataset.mode = id;
+      btn.textContent = MODES[id].label;
+      btn.title = MODES[id].help;
+      btn.setAttribute("aria-pressed", String(id === mode));
+      btn.addEventListener("click", () => {
+        if (!SHIPPED_MODES.includes(id)) return;
+        mode = id;
+        syncModeUi();
+      });
+      modesEl.appendChild(btn);
+    }
+  }
+
+  function slider(rowParent, label, value, min, max, step, onInput) {
+    const row = document.createElement("div");
+    row.className = "opt-row";
+    const lab = document.createElement("label");
+    lab.className = "opt-label";
+    lab.textContent = label;
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+    input.value = String(value);
+    const val = document.createElement("span");
+    val.className = "opt-val";
+    const fmt = (v) => (step < 1 ? Number(v).toFixed(2) : String(Math.round(Number(v))));
+    val.textContent = fmt(value);
+    input.addEventListener("input", () => {
+      val.textContent = fmt(input.value);
+      onInput(Number(input.value));
+    });
+    row.append(lab, input, val);
+    rowParent.appendChild(row);
+  }
+
+  function renderOptions() {
+    optionsEl.replaceChildren();
+    const eng = MODES[mode]?.engine;
+    if (eng === "canvas_instant") {
+      optionsEl.hidden = false;
+      const row = document.createElement("div");
+      row.className = "quick-row";
+      const actions = [
+        ["rotate_ccw", "↺ 90°"],
+        ["rotate_cw", "↻ 90°"],
+        ["flip_h", "Flip H"],
+        ["flip_v", "Flip V"],
+      ];
+      for (const [op, label] of actions) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "quick";
+        b.textContent = label;
+        b.disabled = !file;
+        b.addEventListener("click", () => applyInstantTransform(op));
+        row.appendChild(b);
+      }
+      optionsEl.appendChild(row);
+      return;
+    }
+    if (mode === "crop") {
+      optionsEl.hidden = false;
+      for (const edge of ["left", "top", "right", "bottom"]) {
+        slider(optionsEl, edge[0].toUpperCase() + edge.slice(1), opts.crop[edge], 0, 0.4, 0.01, (v) => {
+          opts.crop[edge] = v;
+        });
+      }
+      return;
+    }
+    if (mode === "adjust") {
+      optionsEl.hidden = false;
+      for (const [key, label, min, max] of [
+        ["brightness", "Bright", 0.5, 1.5],
+        ["contrast", "Contrast", 0.5, 1.5],
+        ["saturation", "Sat", 0.5, 1.5],
+        ["exposure", "Exposure", 0.5, 1.5],
+        ["sharpness", "Sharp", 0.5, 1.5],
+      ]) {
+        slider(optionsEl, label, opts.adjust[key], min, max, 0.01, (v) => {
+          opts.adjust[key] = v;
+        });
+      }
+      return;
+    }
+    if (mode === "sharpen") {
+      optionsEl.hidden = false;
+      slider(optionsEl, "Amount", opts.sharpen.amount, 0.2, 3, 0.1, (v) => {
+        opts.sharpen.amount = v;
+      });
+      return;
+    }
+    if (mode === "denoise") {
+      optionsEl.hidden = false;
+      slider(optionsEl, "Strength", opts.denoise.strength, 3, 21, 1, (v) => {
+        opts.denoise.strength = v;
+      });
+      return;
+    }
+    if (mode === "looks") {
+      optionsEl.hidden = false;
+      const row = document.createElement("div");
+      row.className = "chip-row";
+      for (const look of LOOKS) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "chip";
+        chip.textContent = look.label;
+        chip.setAttribute("aria-pressed", String(look.id === opts.looks.style));
+        chip.addEventListener("click", () => {
+          opts.looks.style = look.id;
+          renderOptions();
+        });
+        row.appendChild(chip);
+      }
+      optionsEl.appendChild(row);
+      return;
+    }
+    if (mode === "blur") {
+      optionsEl.hidden = false;
+      slider(optionsEl, "Radius", opts.blur.radius, 1, 30, 1, (v) => {
+        opts.blur.radius = v;
+      });
+      return;
+    }
+    if (mode === "vignette") {
+      optionsEl.hidden = false;
+      slider(optionsEl, "Strength", opts.vignette.strength, 0.05, 1, 0.05, (v) => {
+        opts.vignette.strength = v;
+      });
+      return;
+    }
+    if (mode === "grain") {
+      optionsEl.hidden = false;
+      slider(optionsEl, "Amount", opts.grain.amount, 0.01, 0.12, 0.01, (v) => {
+        opts.grain.amount = v;
+      });
+      return;
+    }
+    if (mode === "prism") {
+      optionsEl.hidden = false;
+      slider(optionsEl, "Strength", opts.prism.strength, 0.1, 1.2, 0.05, (v) => {
+        opts.prism.strength = v;
+      });
+      return;
+    }
+    optionsEl.hidden = true;
+  }
 
   function syncModeUi() {
-    for (const btn of modeBtns) {
-      btn.setAttribute("aria-pressed", String(btn.dataset.mode === mode));
+    for (const btn of catBtns) {
+      btn.setAttribute("aria-selected", String(btn.dataset.cat === category));
     }
+    if (!CATEGORIES[category]?.includes(mode)) {
+      mode = CATEGORIES[category][0];
+    }
+    renderModes();
     if (modeHelp) modeHelp.textContent = MODES[mode].help;
+    renderOptions();
+    const eng = MODES[mode]?.engine;
+    runBtn.textContent = eng === "canvas_instant" ? "Use buttons above" : "Process photo";
+    runBtn.disabled = !canProcess() || eng === "canvas_instant";
+  }
+
+  async function setWorkingFile(next, { note = "", keepAfter = false } = {}) {
+    file = next;
+    if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
+    localPreviewUrl = URL.createObjectURL(file);
+    setStage(beforeStage, localPreviewUrl, "Original");
+    if (!keepAfter) {
+      setStage(afterStage, null, "Result appears here");
+      resultUrl = null;
+      downloadBtn.disabled = true;
+    }
+    setStatus(
+      status,
+      `${file.name} · ${(file.size / 1024).toFixed(0)} KB ready.${note}`
+    );
+    runBtn.disabled = !canProcess() || MODES[mode]?.engine === "canvas_instant";
+    renderOptions();
+  }
+
+  async function applyInstantTransform(op) {
+    if (!file) return;
+    runBtn.disabled = true;
+    try {
+      setStatus(status, "Transforming…");
+      const out = await transformGeometry(file, op);
+      await setWorkingFile(out, { note: ` (${op.replace("_", " ")})` });
+      setStatus(status, `Applied ${op.replace("_", " ")}. Working photo updated.`);
+    } catch (e) {
+      setStatus(status, formatHostError(e), true);
+    } finally {
+      runBtn.disabled = !canProcess() || MODES[mode]?.engine === "canvas_instant";
+    }
   }
 
   async function pickFile(next) {
@@ -513,18 +873,8 @@ async function main() {
         );
         ready = await ensureProcessableImage(next);
       }
-      file = ready;
-      if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
-      localPreviewUrl = URL.createObjectURL(file);
-      setStage(beforeStage, localPreviewUrl, "Original");
-      setStage(afterStage, null, "Result appears here");
-      resultUrl = null;
-      const note =
-        ready !== next ? " (converted from HEIC)" : "";
-      setStatus(
-        status,
-        `${file.name} · ${(file.size / 1024).toFixed(0)} KB ready.${note}`
-      );
+      const note = ready !== next ? " (converted from HEIC)" : "";
+      await setWorkingFile(ready, { note });
     } catch (e) {
       file = null;
       setStage(beforeStage, null, "No photo yet");
@@ -532,15 +882,13 @@ async function main() {
       resultUrl = null;
       setStatus(status, formatHostError(e), true);
     } finally {
-      runBtn.disabled = !file || !anna;
+      runBtn.disabled = !canProcess() || MODES[mode]?.engine === "canvas_instant";
     }
   }
 
-  for (const btn of modeBtns) {
+  for (const btn of catBtns) {
     btn.addEventListener("click", () => {
-      const next = btn.dataset.mode;
-      if (!SHIPPED_MODES.includes(next)) return;
-      mode = next;
+      category = btn.dataset.cat;
       syncModeUi();
     });
   }
@@ -571,53 +919,72 @@ async function main() {
 
   try {
     anna = await AnnaAppRuntime.connect();
+    hostOptional = false;
     setStatus(status, "Ready — upload a photo to begin.");
-    runBtn.disabled = !file;
-    // Title / ready are best-effort — never block the editor on them.
+    runBtn.disabled = !canProcess() || MODES[mode]?.engine === "canvas_instant";
     Promise.resolve()
       .then(() => anna.window.set_title({ title: "Reliclear" }))
       .then(() => anna.window.ready?.({}))
       .catch(() => {});
   } catch {
+    hostOptional = true;
     setStatus(
       status,
-      "Standalone preview (no Anna host). Run with `anna-app dev` for real edits.",
+      "Standalone preview — Edit / Looks / Effects work offline. Enhance & Remove BG need `anna-app dev`.",
       true
     );
-    runBtn.disabled = true;
+    runBtn.disabled = !canProcess() || MODES[mode]?.engine === "canvas_instant";
   }
 
   runBtn.addEventListener("click", async () => {
-    if (!anna || !file) return;
-
+    if (!file) return;
     if (!SHIPPED_MODES.includes(mode)) {
-      setStatus(
-        status,
-        "Remove object is not available in this release. Use Enhance or Remove background.",
-        true
-      );
+      setStatus(status, "That tool is not available in this release.", true);
       return;
     }
 
-    const prompt = MODES[mode].prompt;
+    const eng = MODES[mode]?.engine;
+    if (eng === "canvas_instant") return;
 
     runBtn.disabled = true;
     downloadBtn.disabled = true;
 
     try {
+      // Browser-local A-tier tools — no Executa / host required.
+      if (eng === "canvas") {
+        setStatus(status, MODES[mode].running);
+        const outFile = await runCanvasMode(mode, file, opts);
+        resultUrl = await fileToDataUrl(outFile);
+        setStage(afterStage, resultUrl, "Result");
+        downloadBtn.disabled = false;
+        try {
+          await anna?.storage?.set?.({
+            key: "photo-enhancer:last",
+            value: { mode, at: Date.now(), path: "canvas", engine: "browser" },
+          });
+        } catch {
+          /* storage is best-effort */
+        }
+        setStatus(
+          status,
+          `Done — ${MODES[mode].label.toLowerCase()} in-browser. You can download the result.`
+        );
+        return;
+      }
+
+      if (!anna) {
+        throw new Error("Anna host required for Enhance / Remove background. Run with `anna-app dev`.");
+      }
+
       // Required local executa first (declared in manifest). Host image.edit is optional.
       if (mode === "enhance" || mode === "remove_bg") {
         const localMethod = mode === "enhance" ? "local_enhance" : "local_remove_bg";
         const localArgs =
-          mode === "enhance"
-            ? { strength: 1.0 }
-            : { model_key: "lite" };
+          mode === "enhance" ? { strength: 1.0 } : { model_key: "lite" };
         try {
           setStatus(
             status,
-            mode === "enhance"
-              ? "Enhancing locally…"
-              : "Removing background locally…"
+            mode === "enhance" ? "Enhancing locally…" : "Removing background locally…"
           );
           const image_png_b64 = await fileToPngBase64(file);
           const localOut = await invokeLocalTool(anna, localMethod, {
@@ -653,18 +1020,14 @@ async function main() {
             return;
           }
         } catch (localErr) {
-          const detail = String(localErr?.message || localErr || "");
-          if (
-            mode === "remove_bg" &&
-            /rembg|No module named|not installed|ImportError|onnxruntime/i.test(detail)
-          ) {
-            // Fall through to optional host edit; if that also fails, surface rembg hint.
-          } else if (!isToolUnavailableError(localErr) && !isHostEditUnavailable(localErr)) {
-            // Real local failure (not "tool missing") — still try optional host before giving up.
-          }
-          // Continue to optional host image.edit below.
           setStatus(status, "Local tool unavailable — trying Anna photo-edit…");
+          void localErr;
         }
+      }
+
+      const prompt = MODES[mode].prompt;
+      if (!prompt) {
+        throw new Error(`${MODES[mode].label} needs the local Reliclear tool.`);
       }
 
       setStatus(status, "Uploading photo…");
@@ -725,9 +1088,11 @@ async function main() {
     } catch (e) {
       setStatus(status, formatHostError(e), true);
     } finally {
-      runBtn.disabled = !file || !anna;
+      runBtn.disabled = !canProcess() || MODES[mode]?.engine === "canvas_instant";
     }
   });
+
+  void hostOptional;
 }
 
 main();

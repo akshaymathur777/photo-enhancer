@@ -103,10 +103,39 @@ body {
   flex: 0 0 auto;
 }
 
-.modes {
+.cats {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+.cat {
+  appearance: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 2px 6px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-align: center;
+}
+
+.cat[aria-selected="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-bottom: 6px;
   width: 100%;
 }
@@ -117,10 +146,10 @@ body {
   background: #fff;
   color: var(--ink);
   border-radius: 999px;
-  padding: 0 14px;
-  height: var(--btn-h);
+  padding: 0 12px;
+  height: 34px;
   font: inherit;
-  font-size: 0.92rem;
+  font-size: 0.84rem;
   cursor: pointer;
   text-align: center;
   white-space: nowrap;
@@ -134,12 +163,110 @@ body {
   color: var(--accent-ink);
 }
 
+.mode:disabled,
+.mode.soon {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .mode-help {
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   line-height: 1.35;
   min-height: 1.2em;
+}
+
+.options {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #faf7f2;
+}
+
+.options[hidden] {
+  display: none;
+}
+
+.options .opt-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.35fr) 1fr minmax(36px, auto);
+  gap: 8px;
+  align-items: center;
+}
+
+.options label.opt-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.options .opt-val {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  text-align: right;
+}
+
+.options input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.options .chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.options .chip {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0 10px;
+  height: 28px;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.options .chip[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.options .quick-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.options .quick {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 0 10px;
+  height: 30px;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.options .quick:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.options .quick:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .drop {
@@ -398,7 +525,20 @@ button.ghost:not(:disabled) {
 
   .mode {
     padding: 0 10px;
-    font-size: 0.88rem;
+    font-size: 0.8rem;
+    height: 32px;
+  }
+
+  .cats {
+    gap: 4px;
+  }
+
+  .cat {
+    font-size: 0.72rem;
+  }
+
+  .options .opt-row {
+    grid-template-columns: minmax(64px, 0.4fr) 1fr minmax(32px, auto);
   }
 
   .actions {
@@ -442,7 +582,7 @@ button.ghost:not(:disabled) {
     grid-template-columns: 1fr;
   }
 
-  .modes {
-    grid-template-columns: 1fr;
+  .cats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
