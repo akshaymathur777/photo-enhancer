@@ -1,6 +1,6 @@
 {
   "display_name": "Photo Enhancer",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "protocolVersion": "2.0",
   "client_capabilities": {
     "image": true,

@@ -9,7 +9,7 @@ import uuid
 from typing import Any
 
 NAME = "tool-dev-photo-enhancer"
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 
 PROMPTS = {
     "enhance": (

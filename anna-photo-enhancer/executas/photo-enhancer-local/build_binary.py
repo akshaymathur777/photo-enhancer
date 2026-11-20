@@ -16,7 +16,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.1.5"
+VERSION = "0.1.6"
 ENTRY = "photo-enhancer-local"
 TOOL_ID = "tool-akshay-photo-enhancer-local-cwgtd7ym"
 DIST = ROOT / "dist"
@@ -54,6 +54,83 @@ def platform_key() -> str:
     if system == "linux":
         return f"linux-{machine}"
     raise SystemExit(f"unsupported platform: {system}-{machine}")
+
+
+def _read_u32(data: bytes, off: int, *, be: bool = False) -> int:
+    chunk = data[off : off + 4]
+    return int.from_bytes(chunk, "big" if be else "little")
+
+
+def detect_binary_arch(path: Path) -> str:
+    """Return a platform_key-compatible arch token for a built executable."""
+    data = path.read_bytes()[:64]
+    if len(data) < 20:
+        raise SystemExit(f"binary too small to inspect: {path}")
+
+    # Mach-O 64-bit (native endian or swapped)
+    magic = _read_u32(data, 0)
+    if magic in (0xFEEDFACF, 0xCFFAEDFE):
+        be = magic == 0xCFFAEDFE
+        cpu = _read_u32(data, 4, be=be)
+        if cpu == 0x0100000C:
+            return "arm64"
+        if cpu == 0x01000007:
+            return "x86_64"
+        raise SystemExit(f"unsupported Mach-O cpu 0x{cpu:08x} in {path}")
+
+    # ELF
+    if data[:4] == b"\x7fELF":
+        endian = "little" if data[5] == 1 else "big"
+        machine = int.from_bytes(data[18:20], endian)
+        if machine == 62:
+            return "x86_64"
+        if machine == 183:
+            return "aarch64"
+        raise SystemExit(f"unsupported ELF machine {machine} in {path}")
+
+    # PE
+    if data[:2] == b"MZ":
+        pe_off = int.from_bytes(data[0x3C:0x40], "little")
+        pe = path.read_bytes()[pe_off : pe_off + 6]
+        if pe[:4] != b"PE\0\0":
+            raise SystemExit(f"invalid PE header in {path}")
+        machine = int.from_bytes(pe[4:6], "little")
+        if machine == 0x8664:
+            return "x86_64"
+        if machine == 0xAA64:
+            return "arm64"
+        raise SystemExit(f"unsupported PE machine 0x{machine:04x} in {path}")
+
+    raise SystemExit(f"unrecognized binary format: {path}")
+
+
+def assert_platform_key_matches_host(key: str) -> None:
+    """Refuse to label an archive for a different CPU than this builder.
+
+    GitHub's macos-latest + setup-python architecture=x64 previously produced
+    ARM64 Mach-O bytes still labeled darwin-x86_64 — Anna review rejected that.
+    """
+    host = platform_key()
+    if key != host:
+        raise SystemExit(
+            f"--platform-key {key} does not match this builder ({host}). "
+            "Build on a real matching runner (e.g. macos-13 for darwin-x86_64); "
+            "do not relabel cross-arch output."
+        )
+
+
+def assert_binary_matches_key(path: Path, key: str) -> None:
+    arch = detect_binary_arch(path)
+    expected = key.split("-", 1)[1]
+    # linux arm uses aarch64 in platform keys; Mach-O/PE use arm64.
+    if expected == "aarch64":
+        ok = arch in ("aarch64", "arm64")
+    else:
+        ok = arch == expected
+    if not ok:
+        raise SystemExit(
+            f"arch mismatch: archive key {key} but binary {path.name} is {arch}"
+        )
 
 
 def venv_python() -> Path:
@@ -147,6 +224,7 @@ def main() -> int:
     parser.add_argument("--platform-key", default=None)
     args = parser.parse_args()
     key = args.platform_key or platform_key()
+    assert_platform_key_matches_host(key)
     exe_name = f"{ENTRY}.exe" if key.startswith("windows") else ENTRY
 
     py = ensure_venv()
@@ -218,11 +296,12 @@ def main() -> int:
         raise SystemExit(f"pyinstaller output missing under {BUILD / 'pyi'}")
 
     shutil.copy2(built, staging / exe_name)
+    assert_binary_matches_key(staging / exe_name, key)
     # Also ship flat weights next to the entrypoint for non-_MEIPASS installs.
     shutil.copy2(u2netp, staging / "u2netp.onnx")
     write_manifest(staging, exe_name)
     out = archive(staging, key)
-    print(f"OK {out}")
+    print(f"OK {out} arch={detect_binary_arch(staging / exe_name)}")
     return 0
 
 
