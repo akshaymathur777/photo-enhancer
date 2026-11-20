@@ -1,0 +1,72 @@
+{
+  "display_name": "Photo Enhancer",
+  "version": "0.1.5",
+  "protocolVersion": "2.0",
+  "client_capabilities": {
+    "image": true,
+    "image.edit": true
+  },
+  "tools": [
+    {
+      "name": "list_modes",
+      "description": "List Reliclear modes available in the App UI and via tools (Enhance, Remove BG, Edit, Looks, Effects).",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "enhance_photo",
+      "description": "Enhance a photo URL via Anna host image.edit when available. For local files prefer open_app_view('main') — UI uses local classical enhance.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "image_url": {
+            "type": "string",
+            "description": "HTTPS URL of the source image (e.g. R2 download_url)."
+          }
+        },
+        "required": ["image_url"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "remove_background",
+      "description": "Remove background from a photo URL via Anna host image.edit when available. For local files prefer open_app_view('main') — UI uses local rembg.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "image_url": {
+            "type": "string",
+            "description": "HTTPS URL of the source image."
+          }
+        },
+        "required": ["image_url"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "remove_object",
+      "description": "Not available in this Reliclear release (desktop-only). Prefer enhance_photo, remove_background, or App UI Edit/Looks/Effects.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "image_url": { "type": "string" },
+          "what_to_remove": { "type": "string" }
+        },
+        "required": ["image_url", "what_to_remove"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "ping",
+      "description": "Smoke-test method.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    }
+  ]
+}

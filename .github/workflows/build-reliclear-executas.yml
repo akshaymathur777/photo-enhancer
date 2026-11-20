@@ -1,0 +1,210 @@
+name: Build Reliclear Executa binaries
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/edit-502-diagnosis-c99a
+      - main
+    paths:
+      - "anna-photo-enhancer/executas/**"
+      - ".github/workflows/build-reliclear-executas.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon — native arm64 build on macos-latest.
+          - os: macos-latest
+            platform_key: darwin-arm64
+            python_arch: arm64
+          # Intel macOS — must be a real x86_64 runner. Labeling an arm64
+          # PyInstaller binary as darwin-x86_64 caused App Review rejection.
+          # macos-13 is the last GitHub-hosted Intel macOS image.
+          - os: macos-13
+            platform_key: darwin-x86_64
+            python_arch: x64
+          - os: ubuntu-22.04
+            platform_key: linux-x86_64
+            python_arch: x64
+          - os: windows-2022
+            platform_key: windows-x86_64
+            python_arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.python_arch }}
+
+      - name: Prove builder arch matches platform_key
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import platform, sys
+          key = "${{ matrix.platform_key }}"
+          system = platform.system().lower()
+          machine = platform.machine().lower()
+          if machine in ("amd64", "x64"):
+              machine = "x86_64"
+          if machine == "arm64" and system == "linux":
+              machine = "aarch64"
+          if system == "darwin":
+              host = f"darwin-{machine if machine != 'aarch64' else 'arm64'}"
+          elif system == "windows":
+              host = f"windows-{machine}"
+          elif system == "linux":
+              host = f"linux-{machine}"
+          else:
+              raise SystemExit(f"unsupported {system}-{machine}")
+          print(f"host={host} key={key} python={sys.version}")
+          if host != key:
+              raise SystemExit(f"runner arch {host} != matrix platform_key {key}")
+          PY
+
+      - name: Build photo-enhancer
+        working-directory: anna-photo-enhancer/executas/photo-enhancer
+        run: python build_binary.py --platform-key ${{ matrix.platform_key }}
+
+      - name: Build photo-enhancer-local
+        working-directory: anna-photo-enhancer/executas/photo-enhancer-local
+        run: python build_binary.py --platform-key ${{ matrix.platform_key }}
+
+      - name: Checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in anna-photo-enhancer/executas/photo-enhancer/dist/* anna-photo-enhancer/executas/photo-enhancer-local/dist/*; do
+            [ -f "$f" ] || continue
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$f" | tee "${f}.sha256"
+            else
+              shasum -a 256 "$f" | tee "${f}.sha256"
+            fi
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: reliclear-executas-${{ matrix.platform_key }}
+          path: |
+            anna-photo-enhancer/executas/photo-enhancer/dist/*
+            anna-photo-enhancer/executas/photo-enhancer-local/dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Stage dist folders
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p anna-photo-enhancer/executas/photo-enhancer/dist
+          mkdir -p anna-photo-enhancer/executas/photo-enhancer-local/dist
+          while IFS= read -r -d '' f; do
+            base=$(basename "$f")
+            if [[ "$base" == photo-enhancer-local-* ]]; then
+              cp "$f" anna-photo-enhancer/executas/photo-enhancer-local/dist/
+            elif [[ "$base" == photo-enhancer-* ]]; then
+              cp "$f" anna-photo-enhancer/executas/photo-enhancer/dist/
+            fi
+          done < <(find artifacts -type f \( -name 'photo-enhancer-*' -o -name 'photo-enhancer-local-*' \) -print0)
+          echo "=== photo-enhancer ==="
+          ls -la anna-photo-enhancer/executas/photo-enhancer/dist
+          echo "=== photo-enhancer-local ==="
+          ls -la anna-photo-enhancer/executas/photo-enhancer-local/dist
+          test "$(ls anna-photo-enhancer/executas/photo-enhancer/dist/photo-enhancer-*-darwin-arm64.tar.gz 2>/dev/null | wc -l)" -ge 1
+          test "$(ls anna-photo-enhancer/executas/photo-enhancer/dist/photo-enhancer-*-darwin-x86_64.tar.gz 2>/dev/null | wc -l)" -ge 1
+          test "$(ls anna-photo-enhancer/executas/photo-enhancer/dist/photo-enhancer-*-linux-x86_64.tar.gz 2>/dev/null | wc -l)" -ge 1
+          test "$(ls anna-photo-enhancer/executas/photo-enhancer/dist/photo-enhancer-*-windows-x86_64.zip 2>/dev/null | wc -l)" -ge 1
+          test "$(ls anna-photo-enhancer/executas/photo-enhancer-local/dist/photo-enhancer-local-*-darwin-arm64.tar.gz 2>/dev/null | wc -l)" -ge 1
+          test "$(ls anna-photo-enhancer/executas/photo-enhancer-local/dist/photo-enhancer-local-*-darwin-x86_64.tar.gz 2>/dev/null | wc -l)" -ge 1
+          test "$(ls anna-photo-enhancer/executas/photo-enhancer-local/dist/photo-enhancer-local-*-linux-x86_64.tar.gz 2>/dev/null | wc -l)" -ge 1
+          test "$(ls anna-photo-enhancer/executas/photo-enhancer-local/dist/photo-enhancer-local-*-windows-x86_64.zip 2>/dev/null | wc -l)" -ge 1
+
+      - name: Verify Mach-O / ELF / PE arches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import struct, tarfile, zipfile, tempfile
+          from pathlib import Path
+
+          def mach_o_arch(data: bytes) -> str:
+              magic = struct.unpack_from("<I", data, 0)[0]
+              if magic == 0xFEEDFACF:
+                  cpu = struct.unpack_from("<I", data, 4)[0]
+              elif magic == 0xCFFAEDFE:
+                  cpu = struct.unpack_from(">I", data, 4)[0]
+              else:
+                  raise SystemExit(f"not mach-o magic=0x{magic:08x}")
+              return {0x0100000C: "arm64", 0x01000007: "x86_64"}[cpu]
+
+          def elf_arch(data: bytes) -> str:
+              assert data[:4] == b"\x7fELF"
+              endian = "little" if data[5] == 1 else "big"
+              machine = int.from_bytes(data[18:20], endian)
+              return {62: "x86_64", 183: "aarch64"}[machine]
+
+          def pe_arch(data: bytes) -> str:
+              assert data[:2] == b"MZ"
+              pe_off = struct.unpack_from("<I", data, 0x3C)[0]
+              assert data[pe_off:pe_off+4] == b"PE\0\0"
+              machine = struct.unpack_from("<H", data, pe_off+4)[0]
+              return {0x8664: "x86_64", 0xAA64: "arm64"}[machine]
+
+          checks = [
+              ("anna-photo-enhancer/executas/photo-enhancer/dist", "photo-enhancer-0.1.5-darwin-arm64.tar.gz", "photo-enhancer", "arm64", "macho"),
+              ("anna-photo-enhancer/executas/photo-enhancer/dist", "photo-enhancer-0.1.5-darwin-x86_64.tar.gz", "photo-enhancer", "x86_64", "macho"),
+              ("anna-photo-enhancer/executas/photo-enhancer/dist", "photo-enhancer-0.1.5-linux-x86_64.tar.gz", "photo-enhancer", "x86_64", "elf"),
+              ("anna-photo-enhancer/executas/photo-enhancer/dist", "photo-enhancer-0.1.5-windows-x86_64.zip", "photo-enhancer.exe", "x86_64", "pe"),
+              ("anna-photo-enhancer/executas/photo-enhancer-local/dist", "photo-enhancer-local-0.1.6-darwin-arm64.tar.gz", "photo-enhancer-local", "arm64", "macho"),
+              ("anna-photo-enhancer/executas/photo-enhancer-local/dist", "photo-enhancer-local-0.1.6-darwin-x86_64.tar.gz", "photo-enhancer-local", "x86_64", "macho"),
+              ("anna-photo-enhancer/executas/photo-enhancer-local/dist", "photo-enhancer-local-0.1.6-linux-x86_64.tar.gz", "photo-enhancer-local", "x86_64", "elf"),
+              ("anna-photo-enhancer/executas/photo-enhancer-local/dist", "photo-enhancer-local-0.1.6-windows-x86_64.zip", "photo-enhancer-local.exe", "x86_64", "pe"),
+          ]
+          for folder, archive, entry, want, kind in checks:
+              path = Path(folder) / archive
+              with tempfile.TemporaryDirectory() as td:
+                  td_path = Path(td)
+                  if archive.endswith(".zip"):
+                      with zipfile.ZipFile(path) as zf:
+                          zf.extract(entry, td_path)
+                  else:
+                      with tarfile.open(path, "r:gz") as tf:
+                          tf.extract(entry, td_path)
+                  blob = (td_path / entry).read_bytes()
+                  got = {"macho": mach_o_arch, "elf": elf_arch, "pe": pe_arch}[kind](blob)
+                  print(f"{archive}: {got}")
+                  if got != want:
+                      raise SystemExit(f"FAIL {archive}: want {want}, got {got}")
+          print("ALL_ARCH_CHECKS_PASSED")
+          PY
+
+      - name: Create/Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: reliclear-executas-v0.1.6
+          name: Reliclear Executa binaries 0.1.6
+          draft: false
+          prerelease: true
+          files: |
+            anna-photo-enhancer/executas/photo-enhancer/dist/*
+            anna-photo-enhancer/executas/photo-enhancer-local/dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
