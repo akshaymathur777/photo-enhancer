@@ -30,13 +30,25 @@ VENV = _TMP / "venv"
 BUILD = _TMP / "build"
 
 # Keep the freeze lean: rembg + classical deps only (no torch/transformers from host site-packages).
+# Install onnxruntime explicitly instead of rembg[cpu] — under Rosetta x86_64 the
+# rembg[cpu] extra can pull numba/llvmlite and try to compile LLVM from source.
 DEPS = [
     "pyinstaller",
     "Pillow",
     "numpy",
     "opencv-python-headless",
-    "rembg[cpu]",
+    "onnxruntime",
+    "rembg",
     "filetype",
+]
+# Native packages must come from wheels (esp. darwin-x86_64 under Rosetta).
+BINARY_ONLY = [
+    "llvmlite",
+    "numba",
+    "onnxruntime",
+    "numpy",
+    "opencv-python-headless",
+    "Pillow",
 ]
 
 
@@ -150,7 +162,20 @@ def ensure_venv() -> Path:
         py = venv_python()
     env = {**os.environ, "VIRTUAL_ENV": str(VENV)}
     subprocess.check_call([str(py), "-m", "pip", "install", "-q", "-U", "pip"], env=env)
-    subprocess.check_call([str(py), "-m", "pip", "install", "-q", *DEPS], env=env)
+    only_binary = ",".join(BINARY_ONLY)
+    subprocess.check_call(
+        [
+            str(py),
+            "-m",
+            "pip",
+            "install",
+            "-q",
+            "--prefer-binary",
+            f"--only-binary={only_binary}",
+            *DEPS,
+        ],
+        env=env,
+    )
     return py
 
 
