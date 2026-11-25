@@ -19,25 +19,33 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Apple Silicon — native arm64 build on macos-latest.
           - os: macos-latest
             platform_key: darwin-arm64
             python_arch: arm64
-          # Intel macOS — must be a real x86_64 runner. Labeling an arm64
-          # PyInstaller binary as darwin-x86_64 caused App Review rejection.
-          # macos-13 is the last GitHub-hosted Intel macOS image.
-          - os: macos-13
+            use_rosetta: false
+          # Intel macOS via Rosetta on macos-latest (macos-13 Intel runners
+          # queue for 30+ minutes). Previous builds labeled ARM64 Mach-O as
+          # darwin-x86_64 and App Review rejected — force arch -x86_64 and
+          # fail if the finished binary is not CPU_TYPE_X86_64.
+          - os: macos-latest
             platform_key: darwin-x86_64
             python_arch: x64
+            use_rosetta: true
           - os: ubuntu-22.04
             platform_key: linux-x86_64
             python_arch: x64
+            use_rosetta: false
           - os: windows-2022
             platform_key: windows-x86_64
             python_arch: x64
+            use_rosetta: false
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Rosetta (Intel macOS builds)
+        if: matrix.use_rosetta
+        run: softwareupdate --install-rosetta --agree-to-license || true
 
       - uses: actions/setup-python@v5
         with:
@@ -48,7 +56,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
+          PY=python
+          if [[ "${{ matrix.use_rosetta }}" == "true" ]]; then
+            # Force the x86_64 translation layer so platform.machine() is x86_64
+            # and PyInstaller emits CPU_TYPE_X86_64, not ARM64.
+            arch -x86_64 /usr/bin/true
+            PY="arch -x86_64 python"
+          fi
+          $PY - <<'PY'
           import platform, sys
           key = "${{ matrix.platform_key }}"
           system = platform.system().lower()
@@ -65,18 +80,32 @@ jobs:
               host = f"linux-{machine}"
           else:
               raise SystemExit(f"unsupported {system}-{machine}")
-          print(f"host={host} key={key} python={sys.version}")
+          print(f"host={host} key={key} python={sys.version} exec={sys.executable}")
           if host != key:
               raise SystemExit(f"runner arch {host} != matrix platform_key {key}")
           PY
 
       - name: Build photo-enhancer
         working-directory: anna-photo-enhancer/executas/photo-enhancer
-        run: python build_binary.py --platform-key ${{ matrix.platform_key }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.use_rosetta }}" == "true" ]]; then
+            arch -x86_64 python build_binary.py --platform-key ${{ matrix.platform_key }}
+          else
+            python build_binary.py --platform-key ${{ matrix.platform_key }}
+          fi
 
       - name: Build photo-enhancer-local
         working-directory: anna-photo-enhancer/executas/photo-enhancer-local
-        run: python build_binary.py --platform-key ${{ matrix.platform_key }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.use_rosetta }}" == "true" ]]; then
+            arch -x86_64 python build_binary.py --platform-key ${{ matrix.platform_key }}
+          else
+            python build_binary.py --platform-key ${{ matrix.platform_key }}
+          fi
 
       - name: Checksums
         shell: bash
