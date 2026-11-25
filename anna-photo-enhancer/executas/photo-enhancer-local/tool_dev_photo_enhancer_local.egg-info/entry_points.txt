@@ -1,0 +1,2 @@
+[console_scripts]
+tool-dev-photo-enhancer-local = photo_enhancer_local_plugin:main

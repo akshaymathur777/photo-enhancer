@@ -1,0 +1,46 @@
+{
+  "slug": "photo-enhancer",
+  "name": "Photo Enhancer",
+  "version": "0.1.5",
+  "executa_type": "tool",
+  "description": "Reliclear chat tools: enhance/remove-bg via host image.edit when healthy; list_modes covers App UI Edit/Looks/Effects; remove_object deferred.",
+  "tool_id": "tool-dev-photo-enhancer",
+  "type": "python",
+  "host_capabilities": ["llm.image", "llm.image.edit"],
+  "distribution": {
+    "active": "binary",
+    "profiles": {
+      "local": {
+        "type": "local",
+        "supports_protocol": true
+      },
+      "binary": {
+        "type": "binary",
+        "supports_protocol": true,
+        "executable_name": "tool-akshay-photo-enhancer-72jdd7jk",
+        "binary_artifacts": {
+          "darwin-arm64": {
+            "path": "dist/photo-enhancer-{version}-darwin-arm64.tar.gz",
+            "entrypoint": "photo-enhancer",
+            "format": "tar.gz"
+          },
+          "darwin-x86_64": {
+            "path": "dist/photo-enhancer-{version}-darwin-x86_64.tar.gz",
+            "entrypoint": "photo-enhancer",
+            "format": "tar.gz"
+          },
+          "linux-x86_64": {
+            "path": "dist/photo-enhancer-{version}-linux-x86_64.tar.gz",
+            "entrypoint": "photo-enhancer",
+            "format": "tar.gz"
+          },
+          "windows-x86_64": {
+            "path": "dist/photo-enhancer-{version}-windows-x86_64.zip",
+            "entrypoint": "photo-enhancer.exe",
+            "format": "zip"
+          }
+        }
+      }
+    }
+  }
+}

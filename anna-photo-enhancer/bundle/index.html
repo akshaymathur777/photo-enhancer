@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reliclear</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <!-- Published mint map for bundled executas (also rewritten by apps push). -->
+    <script src="./anna-tool-ids.js"></script>
+    <script src="./app.js" type="module"></script>
+  </head>
+  <body>
+    <main class="app">
+      <header class="top">
+        <div class="brand-block">
+          <div class="brand">Reliclear</div>
+          <h1 class="hero">Photo cleanup and editing on Anna</h1>
+          <p class="tag">Enhance, remove background, crop, adjust, looks, and effects — then download.</p>
+        </div>
+      </header>
+
+      <section class="panel controls">
+        <div class="cats" role="tablist" aria-label="Tool category">
+          <button type="button" class="cat" data-cat="clean" aria-selected="true">Clean</button>
+          <button type="button" class="cat" data-cat="edit" aria-selected="false">Edit</button>
+          <button type="button" class="cat" data-cat="looks" aria-selected="false">Looks</button>
+          <button type="button" class="cat" data-cat="effects" aria-selected="false">Effects</button>
+        </div>
+
+        <div class="modes" id="modes" role="group" aria-label="Edit mode"></div>
+        <p class="mode-help" id="mode-help">Improve clarity, color, and detail.</p>
+
+        <div class="options" id="options" hidden></div>
+
+        <label class="drop" id="drop" for="file-input">
+          <strong>Upload photo</strong>
+          <span>Drop here or click to choose · JPG / PNG / WEBP / HEIC · up to ~8&nbsp;MB inline</span>
+        </label>
+        <input class="hidden-input" id="file-input" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif,image/*" />
+
+        <div class="actions">
+          <div class="action-buttons">
+            <button type="button" class="primary" id="run-btn" disabled>Process photo</button>
+            <button type="button" class="ghost" id="download-btn" disabled>Download result</button>
+          </div>
+          <div class="status" id="status">Connecting…</div>
+        </div>
+      </section>
+
+      <section class="panel compare" aria-label="Before and after preview">
+        <div class="frame">
+          <h2>Before</h2>
+          <div class="stage" id="before-stage">
+            <div class="placeholder">No photo yet</div>
+          </div>
+        </div>
+        <div class="frame">
+          <h2>After</h2>
+          <div class="stage" id="after-stage">
+            <div class="placeholder">Result appears here</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
